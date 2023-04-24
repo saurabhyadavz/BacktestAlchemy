@@ -4,7 +4,9 @@ import sys
 sys.path.append(r"C:\Users\DeGenOne\degen-money-backtest")
 
 from backtest.data.data import DataProducer
+from backtest.strategy.strategy import Strategy
 
 if __name__ == "__main__":
     data = DataProducer("BANKNIFTY", "2022-01-01", "2022-01-01", "60min")
-    print(data.resampled_historical_df)
+    strat = Strategy(is_intraday=False, start_time="9:25", end_time="15:00")
+
