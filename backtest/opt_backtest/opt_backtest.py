@@ -1,0 +1,79 @@
+import pandas as pd
+from backtest.strategy.strategy import Strategy
+from backtest.data.data import DataProducer
+
+class OptBacktest:
+    def __init__(self, strategy: Strategy, data: DataProducer):
+        self.strategy = strategy
+        self.data = data
+
+    def backtest_simple_straddle(self):
+        df = self.data.historical_df_with_exp_comp
+        df["day"] = df["date"].dt.date
+        df["Points"] = 0
+        day_groups = df.groupby("day")
+        for day, day_df in day_groups:
+            entry_close_price = day_df.loc[day_df["date"].dt.time == self.strategy.start_time, "close"].iloc[0]
+            atm = int(round(entry_close_price, -2))
+            expiry_comp = day_df["expiry_comp"].iloc[0]
+            option_symbols = []
+            atm_ce_symbol = f"{self.data.instrument}{expiry_comp}{atm}CE"
+            atm_pe_symbol = f"{self.data.instrument}{expiry_comp}{atm}PE"
+            option_symbols.append(atm_ce_symbol)
+            option_symbols.append(atm_pe_symbol)
+            for opt_symbol in option_symbols:
+                curr_date = day
+                option_df = self.data.fetch_options_data_and_resample(opt_symbol, curr_date, curr_date, self.strategy.timeframe)
+                day_df = pd.merge(day_df, option_df, on='date')
+            ce_stoploss_price, pe_stoploss_price = None, None
+            ce_short_price, pe_short_price = None, None
+            day_pnl = 0
+            is_ce_leg_open, is_pe_leg_open = False, False
+            for idx, row in day_df.iterrows():
+                curr_time = row["date"].time()
+                curr_ce_price = row[f"{atm_ce_symbol}_close"]
+                curr_pe_price = row[f"{atm_pe_symbol}_close"]
+                if curr_time < self.strategy.start_time:
+                    continue
+                if curr_time == self.strategy.start_time:
+                    ce_short_price = curr_ce_price
+                    pe_short_price = curr_pe_price
+                    is_ce_leg_open, is_pe_leg_open = True, True
+                    ce_stoploss_price = (1 + self.strategy.stop_loss) * ce_short_price
+                    pe_stoploss_price = (1 + self.strategy.stop_loss) * pe_short_price
+                else:
+                    if curr_time >= self.strategy.end_time:
+                        if is_ce_leg_open:
+                            day_pnl += (ce_short_price - curr_ce_price)
+                            df.loc[idx, "Points"] += (ce_short_price - curr_ce_price)
+                        if is_pe_leg_open:
+                            day_pnl += (pe_short_price - curr_pe_price)
+                            df.loc[idx, "Points"] += (pe_short_price - curr_pe_price)
+                        break
+                    if curr_ce_price >= ce_stoploss_price and is_ce_leg_open:
+                        day_pnl += (ce_short_price - curr_ce_price)
+                        df.loc[idx, "Points"] += (ce_short_price - curr_ce_price)
+                        is_ce_leg_open = False
+                        if is_pe_leg_open and self.strategy.move_sl_to_cost:
+                            pe_stoploss_price = pe_short_price
+
+                    if curr_pe_price >= pe_stoploss_price and is_pe_leg_open:
+                        day_pnl += (pe_short_price - curr_pe_price)
+                        df.loc[idx, "Points"] += (pe_short_price - curr_pe_price)
+                        is_pe_leg_open = False
+                        if is_ce_leg_open and self.strategy.move_sl_to_cost:
+                            ce_stoploss_price = ce_short_price
+        return df["Points"]
+
+
+
+
+
+
+
+
+
+
+
+
+
