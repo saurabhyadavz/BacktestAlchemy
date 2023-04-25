@@ -44,7 +44,7 @@ def get_all_expiry_dates() -> list[dict[typing.Any]]:
     Returns:
         list[dict[typing.Any]]: returns a list of dictionary containing(index, expiry_str, expiry_date)
     """
-    url = f"{utils.BACKEND_URL}/nse/get_expiry_info/"
+    url = f"{utils.BACKEND_URL}/nse/get_expiry/"
     response = requests.get(url)
     if response.status_code == 307:
         redirect_url = response.headers['Location']

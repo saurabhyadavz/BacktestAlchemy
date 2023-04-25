@@ -44,7 +44,6 @@ def str_to_time_obj(input_str: str) -> Union[datetime.time, None]:
         datetime.time: returns time object
     """
     try:
-        print(input_str)
         hours, minutes = map(int, input_str.split(":"))
         time_obj = time(hour=hours, minute=minutes)
     except ValueError:

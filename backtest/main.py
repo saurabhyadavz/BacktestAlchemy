@@ -1,7 +1,7 @@
 # adding project path to python path
 import sys
 
-sys.path.append("/Users/saurabh/degen-money-backtest")
+sys.path.append(r"C:\Users\DeGenOne\degen-money-backtest")
 
 from backtest.data.data import DataProducer
 from backtest.strategy.strategy import Strategy
@@ -9,7 +9,7 @@ from backtest.opt_backtest.opt_backtest import OptBacktest
 from backtest.analyzers.analyzers import Analyzers
 
 if __name__ == "__main__":
-    strategy = Strategy(start_date="2020-01-01", end_date="2020-02-20",
+    strategy = Strategy(start_date="2016-01-01", end_date="2022-12-30",
                         instrument="BANKNIFTY", is_intraday=True,
                         start_time="9:25", end_time="15:00",
                         stop_loss=0.2, move_sl_to_cost=True)
