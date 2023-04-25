@@ -12,10 +12,9 @@ class OptBacktest:
         df = self.data.historical_df_with_exp_comp
         df["day"] = df["date"].dt.date
         df["Points"] = 0
-        date_points = pd.Series(index=df['date'].dt.date.unique())
+        date_points = pd.Series(index=df['date'].dt.date.unique(), dtype=object)
         day_groups = df.groupby("day")
         for day, day_df in day_groups:
-            print(f"Running for {day}")
             entry_close_price = day_df.loc[day_df["date"].dt.time == self.strategy.start_time, "close"].iloc[0]
             atm = int(round(entry_close_price, -2))
             expiry_comp = day_df["expiry_comp"].iloc[0]
