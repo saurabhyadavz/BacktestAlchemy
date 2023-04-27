@@ -1,16 +1,14 @@
-# adding project path to python path
-import datetime
+###################### adding project path to python path
 import sys
-import os
-
 
 sys.path.append(r"C:\Users\DeGenOne\degen-money-backtest")
-from backtest.utils import utils
+#####################
+import os
 from backtest.data.data import DataProducer
 from backtest.strategy.strategy import Strategy
 from backtest.opt_backtest.opt_backtest import OptBacktest
-from backtest.analyzers.analyzers import Analyzers
-from backtest.data import data
+from backtest.analyzers.analyzers import Analyzers, DegenPlotter
+
 
 # def run_simple_straddle():
 #     strategy = Strategy(start_date="2019-01-01", end_date="2019-12-30",
@@ -34,10 +32,11 @@ def run_positional_iron_condor():
     data = DataProducer(strategy.instrument, strategy.start_date, strategy.end_date, strategy.timeframe)
     bt = OptBacktest(strategy, data)
     points = bt.backtest_positional_iron_condor()
-    points.to_csv(os.path.join(os.getcwd(), "pnl_tracer.csv"))
+    degen_plotter = DegenPlotter(points, lot_size=25, strat_name="positional_iron_condor")
+    degen_plotter.plot_all()
     analyzer = Analyzers()
     metrics = analyzer.get_metrics(points, strat="Positional Iron Condor")
-    print(metrics)
+    metrics.to_csv(os.path.join(os.getcwd(), "metrices.csv"))
 
 
 if __name__ == "__main__":
