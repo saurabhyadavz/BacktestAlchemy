@@ -23,7 +23,14 @@ def resample_ohlc_df(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         day_groups = df.groupby("day")
         resampled_dfs = []
         for day, day_df in day_groups:
-            resampled_df = day_df.resample(timeframe, origin="start").agg({
+            start_time = f'{day} 09:15:00'
+            end_time = f'{day} 15:29:00'
+            dt_index = pd.date_range(start=start_time, end=end_time, freq='1T')
+            df_range = pd.DataFrame(index=dt_index)
+            df_range = df_range.rename_axis("date")
+            df_range = df_range.merge(day_df, how='left', left_index=True, right_index=True)
+            df_range.fillna(method='ffill', inplace=True)
+            resampled_df = df_range.resample(timeframe, origin="start").agg({
                 "open": "first",
                 "high": "max",
                 "low": "min",
@@ -38,7 +45,8 @@ def resample_ohlc_df(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         print(f"Error occurred while resampling OHLC df [{df}: {str(e)}]")
         return pd.DataFrame()
 
-def get_all_expiry_dates() -> list[dict[typing.Any]]:
+
+def get_all_expiry_info() -> list[dict[typing.Any]]:
     """
     Functions fetches all the expiry dates
     Returns:
@@ -61,6 +69,67 @@ def get_all_expiry_dates() -> list[dict[typing.Any]]:
     return data
 
 
+def get_expiry_dates(list_of_expiry_info_dict: list[dict[typing.Any, typing.Any]]):
+    expiry_dates_list = [datetime.strptime(d['expiry_date'], '%Y-%m-%d').date()
+                         for d in list_of_expiry_info_dict]
+    return expiry_dates_list
+
+
+def get_expiry_comp_dict(list_of_expiry_info_dict: list[dict[typing.Any, typing.Any]]):
+    expiry_comp_dict = {
+        datetime.strptime(d['expiry_date'], '%Y-%m-%d').date(): d['expiry_str']
+        for d in list_of_expiry_info_dict
+    }
+    return expiry_comp_dict
+
+
+def fetch_options_data_and_resample(opt_symbol, start_date, end_date, timeframe):
+    url = f"{utils.BACKEND_URL}/instruments/historical/{opt_symbol}/{start_date}/{end_date}/"
+    response = requests.get(url, params={"spot": "false"})
+    data = None
+    if response.status_code == 307:
+        redirect_url = response.headers['Location']
+        print(f"Redirecting to: {redirect_url}")
+        response = requests.get(redirect_url, params={"spot": "false"})
+        response = response.json()
+        if response["message"] == "success":
+            data = response["data"]
+            df = pd.DataFrame(data)
+            df["date"] = pd.to_datetime(df["date"])
+            resampled_df = resample_ohlc_df(df, timeframe)
+            resampled_df.drop(["open", "high", "low"], axis=1, inplace=True)
+            resampled_df = resampled_df.rename(columns={"close": f"{opt_symbol}_close"})
+            return resampled_df
+        else:
+            print(f"Error fetching data for: {opt_symbol}")
+            return pd.DataFrame()
+    response = response.json()
+    if response["message"] == "success":
+        data = response["data"]
+        df = pd.DataFrame(data)
+        df["date"] = pd.to_datetime(df["date"])
+        resampled_df = resample_ohlc_df(df, timeframe)
+        resampled_df.drop(["open", "high", "low"], axis=1, inplace=True)
+        resampled_df = resampled_df.rename(columns={"close": f"{opt_symbol}_close"})
+        return resampled_df
+    else:
+        print(f"Error occurred while getting option data for {opt_symbol} for {start_date}")
+        return pd.DataFrame()
+
+
+def get_trading_days():
+    url = f"{utils.BACKEND_URL}/nse/get_trading_days/"
+    response = requests.get(url)
+    response = response.json()
+    if response["message"] == "success":
+        data = response["data"]
+        trading_days = [datetime.strptime(x["Date"], "%Y-%m-%d").date() for x in data]
+        return trading_days
+    else:
+        print(f"Error occurred in func(get_trading_days)")
+        return []
+
+
 class DataProducer:
     def __init__(self, instrument: str, from_date: Union[str, datetime.date],
                  to_date: Union[str, datetime.date], timeframe: str, expiry_week: int = 0):
@@ -71,71 +140,43 @@ class DataProducer:
         self.historical_df = self._fetch_spot_historical_data()
         self.resampled_historical_df = resample_ohlc_df(self.historical_df, self.timeframe)
         self.expiry_week = expiry_week
-        self.list_of_expiry_dicts = get_all_expiry_dates()
-        self.historical_df_with_exp_comp = self.get_ohlc_with_expiry_comp(self.resampled_historical_df)
+        self.list_of_expiry_info_dict = get_all_expiry_info()
+        self.expiry_dates_list = get_expiry_dates(self.list_of_expiry_info_dict)
+        self.expiry_comp_dict = get_expiry_comp_dict(self.list_of_expiry_info_dict)
+        self.trading_days = get_trading_days()
 
-    def get_greater_closet_expiry(self, dt: datetime.date, expiry_dates: list[datetime.date]) -> datetime.date:
+    def get_closet_expiry(self, dt: datetime.date, week_number: int = 0) -> datetime.date:
         """
         Returns the closest expiry given expiry(current week, next week and so on...)
         Args:
             dt(datetime.date): given date
-            expiry_dates(list[datetime.date]): list of all expiry dates
+            week_number(int): given week number to get the expiry date
 
         Returns:
-            datetime.date: returns the closet expiry date based on the given expiry(current week, next week and so on...)
+            datetime.date: returns the closet expiry date based on the given week number(current week(0), next week(0) and so on...)
         """
         count = 0
-        for expiry_dt in expiry_dates:
+        for expiry_dt in self.expiry_dates_list:
             if expiry_dt >= dt:
-                if self.expiry_week == count:
+                if week_number == count:
                     return expiry_dt
                 count += 1
         print("Error: Couldn't find closest expiry date")
         return None
 
-    def get_expiry_comp_from_date(self, dt: datetime.date, expiry_dates: list[datetime.date],
-                                  expiry_date_comp_dict: dict[str, datetime.date]) -> str:
+    def get_expiry_comp_from_date(self, expiry_date: datetime.date) -> str:
         """
-        Returns expiry component by finding the closest expiry week given date
+        Returns expiry component for given expiry date
         Args:
-            dt(datetime.date): given date
-            expiry_dates(list[datetime.date]): list of all expiry dates
-            expiry_date_comp_dict(dict[str, datetime.date]):
+            expiry_date(datetime.date): given expiry date
 
         Returns:
             str: returns a string expiry component
         """
         try:
-            closet_expiry_date = self.get_greater_closet_expiry(dt, expiry_dates)
-            return expiry_date_comp_dict[closet_expiry_date]
+            return self.expiry_comp_dict[expiry_date]
         except TypeError as e:
             print(f"Error in func(get_expiry_comp_from_date): {e}")
-
-    def get_ohlc_with_expiry_comp(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Add expiry_comp column in df given expiry week
-        Args:
-            df(pd.Dataframe): given OHLC dataframe
-
-        Returns:
-            pd.DataFrame: returns dataframe with expiry_comp col added in it
-        """
-        try:
-            expiry_dates_list = [datetime.strptime(d['expiry_date'], '%Y-%m-%d').date()
-                                 for d in self.list_of_expiry_dicts]
-            expiry_date_comp_dict = {
-                datetime.strptime(d['expiry_date'], '%Y-%m-%d').date(): d['expiry_str']
-                for d in self.list_of_expiry_dicts
-            }
-            df["expiry_comp"] = df.apply(lambda row: self.get_expiry_comp_from_date(
-                row["date"].date(),
-                expiry_dates_list,
-                expiry_date_comp_dict
-            ), axis=1)
-            return df
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            return pd.DataFrame()
 
     def _fetch_spot_historical_data(self) -> pd.DataFrame:
         """
@@ -176,37 +217,4 @@ class DataProducer:
             return df
         else:
             print(f"Error fetching data: {response['message']}")
-            return pd.DataFrame()
-
-    def fetch_options_data_and_resample(self, opt_symbol, start_date, end_date, timeframe):
-        url = f"{utils.BACKEND_URL}/instruments/historical/{opt_symbol}/{start_date}/{end_date}/"
-        response = requests.get(url, params={"spot": "false"})
-        data = None
-        if response.status_code == 307:
-            redirect_url = response.headers['Location']
-            print(f"Redirecting to: {redirect_url}")
-            response = requests.get(redirect_url, params={"spot": "false"})
-            response = response.json()
-            if response["message"] == "success":
-                data = response["data"]
-                df = pd.DataFrame(data)
-                df["date"] = pd.to_datetime(df["date"])
-                resampled_df = resample_ohlc_df(df, timeframe)
-                resampled_df.drop(["open", "high", "low"], axis=1, inplace=True)
-                resampled_df = resampled_df.rename(columns={"close": f"{opt_symbol}_close"})
-                return resampled_df
-            else:
-                print(f"Error fetching data for: {opt_symbol}")
-                return pd.DataFrame()
-        response = response.json()
-        if response["message"] == "success":
-            data = response["data"]
-            df = pd.DataFrame(data)
-            df["date"] = pd.to_datetime(df["date"])
-            resampled_df = resample_ohlc_df(df, timeframe)
-            resampled_df.drop(["open", "high", "low"], axis=1, inplace=True)
-            resampled_df = resampled_df.rename(columns={"close": f"{opt_symbol}_close"})
-            return resampled_df
-        else:
-            print(f"Error occurred while getting option data for {opt_symbol} for {start_date}")
             return pd.DataFrame()

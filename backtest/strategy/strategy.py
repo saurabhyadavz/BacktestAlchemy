@@ -6,7 +6,9 @@ class Strategy:
                  stop_loss: Union[int, float] = None, target: Union[int, float] = None,
                  per_trade_commission: float = 0, slippage: float = 0,
                  re_entry_count: int = 0, re_execute_count: int = 0,
-                 timeframe: str = "1min", move_sl_to_cost: bool = True):
+                 timeframe: str = "1min", move_sl_to_cost: bool = False,
+                 trading_days_before_expiry=None, how_far_otm_hedge_point: int = None,
+                 how_far_otm_short_point: int = None):
         self.start_date = start_date
         self.end_date = end_date
         self.instrument = instrument
@@ -21,3 +23,6 @@ class Strategy:
         self.re_execute_count = re_execute_count
         self.timeframe = timeframe
         self.move_sl_to_cost = move_sl_to_cost
+        self.trading_days_before_expiry = trading_days_before_expiry
+        self.how_far_otm_hedge_point = how_far_otm_hedge_point
+        self.how_far_otm_short_point = how_far_otm_short_point
