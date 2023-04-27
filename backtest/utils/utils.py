@@ -126,9 +126,6 @@ def get_merged_opt_symbol_df(df: pd.DataFrame, iron_condor_dict: dict[str, typin
         if opt_symbol_col in df.columns:
             continue
         option_df = data.fetch_options_data_and_resample(opt_symbol, curr_date, curr_date, timeframe)
-        print(f"Getting opt data{opt_symbol}")
-        print(f"Option df index {option_df.index}")
-        print(option_df)
         if option_df.empty:
             is_symbol_missing = True
             with open(os.path.join(os.getcwd(), "missing_symbols.txt"), "a") as f:

@@ -88,7 +88,7 @@ class OptBacktest:
         df = self.data.resampled_historical_df
         df["day"] = df["date"].dt.date
         df["Points"] = 0
-        track_pnl = pd.Series(np.nan, index=df['date'])
+        track_pnl = pd.Series(np.nan, index=df['date'].dt.date.unique())
         day_groups = df.groupby("day")
         is_position = False
         iron_condor_dict = {}
@@ -98,6 +98,7 @@ class OptBacktest:
         is_condition_satisfied = False
         entry_date = None
         exit_date = None
+        runtime_pnl = 0
         for day, day_df in day_groups:
             curr_week_expiry_dt = self.data.get_closet_expiry(day, week_number=0)
             next_week_expiry_dt = self.data.get_closet_expiry(day, week_number=1)
@@ -132,31 +133,22 @@ class OptBacktest:
             for idx, row in day_df.iterrows():
                 curr_time = day_df.loc[idx, "date"].time()
                 curr_atm_strike = int(round(day_df.loc[idx, "close"], -2))
-
-                if ((
-                        curr_time >= self.strategy.start_time and not is_position and re_execute_count < self.strategy.re_execute_count)
+                if re_execute_count == self.strategy.re_execute_count and  not is_position:
+                    continue
+                if ((curr_time >= self.strategy.start_time and not is_position and re_execute_count < self.strategy.re_execute_count)
                         or (re_execute and not is_position)):
-                    self.backtest_logger.logger.info(f"Taking Entry at: {curr_time} on {day}")
                     is_symbol_missing, day_df = utils.get_merged_opt_symbol_df(day_df, iron_condor_dict, day,
                                                                                self.strategy.timeframe)
                     if is_symbol_missing:
                         break
-
                     ce_short_entry_price = day_df.loc[idx, f"{iron_condor_dict['ce_short_opt_symbol']}_close"]
                     pe_short_entry_price = day_df.loc[idx, f"{iron_condor_dict['pe_short_opt_symbol']}_close"]
                     ce_hedge_entry_price = day_df.loc[idx, f"{iron_condor_dict['ce_hedge_opt_symbol']}_close"]
                     pe_hedge_entry_price = day_df.loc[idx, f"{iron_condor_dict['pe_hedge_opt_symbol']}_close"]
-                    self.backtest_logger.logger.info(f"Entry in {iron_condor_dict['ce_short_opt_symbol']}"
-                                                     f" at {ce_short_entry_price}")
-                    self.backtest_logger.logger.info(f"Entry in {iron_condor_dict['pe_short_opt_symbol']} "
-                                                     f"at {pe_short_entry_price}")
-                    self.backtest_logger.logger.info(f"Entry in {iron_condor_dict['ce_hedge_opt_symbol']} "
-                                                     f"at {ce_hedge_entry_price}")
-                    self.backtest_logger.logger.info(f"Entry in {iron_condor_dict['pe_hedge_opt_symbol']} "
-                                                     f"at {pe_hedge_entry_price}")
                     total_entry_price = (-1 * ce_short_entry_price + -1 * pe_short_entry_price +
                                          1 * ce_hedge_entry_price + 1 * pe_hedge_entry_price)
-                    track_pnl.loc[day_df.loc[idx, "date"]] = total_entry_price
+                    runtime_pnl += total_entry_price
+                    # track_pnl.loc[day_df.loc[idx, "date"]] = total_entry_price
                     is_position = True
                     if re_execute:
                         re_execute = False
@@ -173,17 +165,9 @@ class OptBacktest:
                         pe_hedge_exit_price = day_df.loc[idx, f"{iron_condor_dict['pe_hedge_opt_symbol']}_close"]
                         total_exit_price = (1 * ce_short_exit_price + 1 * pe_short_exit_price +
                                             -1 * ce_hedge_exit_price + -1 * pe_hedge_exit_price)
-                        track_pnl.loc[day_df.loc[idx, "date"]] = total_exit_price
+                        runtime_pnl += total_exit_price
+                        # track_pnl.loc[day_df.loc[idx, "date"]] = total_exit_price
                         is_position = False
-                        self.backtest_logger.logger.info(f"Exiting at {curr_time} on {day}")
-                        self.backtest_logger.logger.info(f"Exiting in {iron_condor_dict['ce_short_opt_symbol']}"
-                                                         f" at {ce_short_exit_price}")
-                        self.backtest_logger.logger.info(f"Exiting in {iron_condor_dict['pe_short_opt_symbol']} "
-                                                         f"at {pe_short_exit_price}")
-                        self.backtest_logger.logger.info(f"Exiting in {iron_condor_dict['ce_hedge_opt_symbol']} "
-                                                         f"at {ce_hedge_exit_price}")
-                        self.backtest_logger.logger.info(f"Exiting in {iron_condor_dict['pe_hedge_opt_symbol']} "
-                                                         f"at {pe_hedge_exit_price}")
 
                         # re-execute only if:
                         # 1. current day is not exit day and curr time is greater than exit time
@@ -191,18 +175,23 @@ class OptBacktest:
                         if (self.strategy.re_execute_count and
                                 self.strategy.re_execute_count != re_execute_count and
                                 not (day == exit_date and curr_time >= self.strategy.end_time)):
-                            self.backtest_logger.logger.info(f"Re-Execute at next minute of {curr_time}")
                             re_execute = True
+
+                if ((re_execute_count == self.strategy.re_execute_count and day <= exit_date and not is_position)
+                        or (day == exit_date and not is_position)):
+                    track_pnl.loc[day] = -1 * runtime_pnl
+                    runtime_pnl = 0
 
                 if re_execute or (not is_position and day == exit_date):
                     if day == exit_date:
                         expiry_comp = self.data.get_expiry_comp_from_date(next_week_expiry_dt)
                         exit_date = exit_n_days_before_expiry
                         re_execute_count = 0
+
                     iron_condor_dict = utils.generate_iron_condor_strikes_and_symbols(
                         self.strategy.instrument, curr_atm_strike,
                         self.strategy.how_far_otm_short_point,
                         self.strategy.how_far_otm_hedge_point, expiry_comp
                     )
-
+        track_pnl.dropna(inplace=True)
         return track_pnl

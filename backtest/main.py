@@ -1,7 +1,7 @@
 # adding project path to python path
 import datetime
 import sys
-
+import os
 
 
 sys.path.append(r"C:\Users\DeGenOne\degen-money-backtest")
@@ -26,7 +26,7 @@ from backtest.data import data
 
 
 def run_positional_iron_condor():
-    strategy = Strategy(start_date="2019-01-01", end_date="2019-01-30",
+    strategy = Strategy(start_date="2019-01-01", end_date="2019-12-30",
                         instrument="BANKNIFTY", is_intraday=False,
                         start_time="10:00", end_time="10:00",
                         re_execute_count=1, trading_days_before_expiry=1,
@@ -34,11 +34,10 @@ def run_positional_iron_condor():
     data = DataProducer(strategy.instrument, strategy.start_date, strategy.end_date, strategy.timeframe)
     bt = OptBacktest(strategy, data)
     points = bt.backtest_positional_iron_condor()
-    import os
     points.to_csv(os.path.join(os.getcwd(), "pnl_tracer.csv"))
-    # analyzer = Analyzers()
-    # metrics = analyzer.get_metrics(points, strat="Positional Iron Condor")
-    # print(metrics)
+    analyzer = Analyzers()
+    metrics = analyzer.get_metrics(points, strat="Positional Iron Condor")
+    print(metrics)
 
 
 if __name__ == "__main__":
