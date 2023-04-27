@@ -2,7 +2,7 @@ import typing
 from datetime import datetime, time
 from typing import Union
 from backtest.data import data
-
+import os
 import pandas as pd
 
 BACKEND_URL = "http://127.0.0.1:8000"
@@ -122,12 +122,51 @@ def get_merged_opt_symbol_df(df: pd.DataFrame, iron_condor_dict: dict[str, typin
     """
     is_symbol_missing = False
     for opt_symbol in iron_condor_dict["trading_symbols"]:
+        opt_symbol_col = f"{opt_symbol}_close"
+        if opt_symbol_col in df.columns:
+            continue
         option_df = data.fetch_options_data_and_resample(opt_symbol, curr_date, curr_date, timeframe)
+        print(f"Getting opt data{opt_symbol}")
+        print(f"Option df index {option_df.index}")
+        print(option_df)
         if option_df.empty:
             is_symbol_missing = True
-            with open("/Users/saurabh/degen-money-backtest/backtest/missing_symbols.txt", "a") as f:
+            with open(os.path.join(os.getcwd(), "missing_symbols.txt"), "a") as f:
                 f.write(f"{curr_date} {opt_symbol}\n")
         else:
             df = pd.merge(df, option_df, on='date')
     return is_symbol_missing, df
+
+
+def get_n_days_before_date(n: int, trading_dates: list[datetime.date], date_to_find: datetime.date) -> datetime.date:
+    """
+    Merges option symbol close price with given df
+    Args:
+        n(int): n days before given date
+        trading_dates(list[datetime.date]):  list of trading dates
+        date_to_find(datetime.date): date to find
+
+    Returns:
+        datetime.date: returns n days before given date
+    """
+    left, right = 0, len(trading_dates) - 1
+    find_index = -1
+    while left <= right:
+        mid = (left + right) // 2
+        if trading_dates[mid] < date_to_find:
+            left = mid + 1
+        elif trading_dates[mid] > date_to_find:
+            right = mid - 1
+        else:
+            find_index = mid
+            break
+    if find_index == -1:
+        print(f"{date_to_find} doesn't exist in trading dates list")
+        return -1
+    else:
+        if (find_index - n) >= 0:
+            return trading_dates[find_index - n]
+        else:
+            print(f"{n} days before {date_to_find} doesn't exist")
+            return -1
 

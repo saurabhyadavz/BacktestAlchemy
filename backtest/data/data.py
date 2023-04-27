@@ -23,7 +23,14 @@ def resample_ohlc_df(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         day_groups = df.groupby("day")
         resampled_dfs = []
         for day, day_df in day_groups:
-            resampled_df = day_df.resample(timeframe, origin="start").agg({
+            start_time = f'{day} 09:15:00'
+            end_time = f'{day} 15:29:00'
+            dt_index = pd.date_range(start=start_time, end=end_time, freq='1T')
+            df_range = pd.DataFrame(index=dt_index)
+            df_range = df_range.rename_axis("date")
+            df_range = df_range.merge(day_df, how='left', left_index=True, right_index=True)
+            df_range.fillna(method='ffill', inplace=True)
+            resampled_df = df_range.resample(timeframe, origin="start").agg({
                 "open": "first",
                 "high": "max",
                 "low": "min",
@@ -109,17 +116,19 @@ def fetch_options_data_and_resample(opt_symbol, start_date, end_date, timeframe)
         print(f"Error occurred while getting option data for {opt_symbol} for {start_date}")
         return pd.DataFrame()
 
+
 def get_trading_days():
     url = f"{utils.BACKEND_URL}/nse/get_trading_days/"
     response = requests.get(url)
     response = response.json()
     if response["message"] == "success":
         data = response["data"]
-        trading_days = [x["Date"] for x in data]
+        trading_days = [datetime.strptime(x["Date"], "%Y-%m-%d").date() for x in data]
         return trading_days
     else:
         print(f"Error occurred in func(get_trading_days)")
         return []
+
 
 class DataProducer:
     def __init__(self, instrument: str, from_date: Union[str, datetime.date],
