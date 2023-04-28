@@ -96,7 +96,6 @@ class OptBacktest:
         re_execute = False
         re_execute_count = 0
         is_condition_satisfied = False
-        entry_date = None
         exit_date = None
         runtime_pnl = 0
         for day, day_df in day_groups:
@@ -107,7 +106,6 @@ class OptBacktest:
             exit_n_days_before_expiry = utils.get_n_days_before_date(self.strategy.trading_days_before_expiry,
                                                                      self.data.trading_days, next_week_expiry_dt)
             if entry_n_days_before_expiry == day and not is_position:
-                entry_date = day
                 re_execute_count = 0
                 exit_date = exit_n_days_before_expiry
                 is_condition_satisfied = True
@@ -125,18 +123,28 @@ class OptBacktest:
             if is_position:
                 is_symbol_missing, day_df = utils.get_merged_opt_symbol_df(day_df, iron_condor_dict, day,
                                                                            self.strategy.timeframe)
-                # if any trading symbol is missing then we skip trading
                 if is_symbol_missing:
-                    continue
+                    if exit_date == day:
+                        entry_close_price = day_df.loc[day_df["date"].dt.time == self.strategy.start_time, "close"].iloc[0]
+                        entry_atm_strike = int(round(entry_close_price, -2))
+                        expiry_comp = self.data.get_expiry_comp_from_date(next_week_expiry_dt)
+                        iron_condor_dict = utils.generate_iron_condor_strikes_and_symbols(
+                            self.strategy.instrument, entry_atm_strike,
+                            self.strategy.how_far_otm_short_point,
+                            self.strategy.how_far_otm_hedge_point, expiry_comp
+                        )
+                        is_position = False
+                    else:
+                        continue
 
             day_df = day_df.reset_index(drop=True)
             for idx, row in day_df.iterrows():
                 curr_time = day_df.loc[idx, "date"].time()
                 curr_atm_strike = int(round(day_df.loc[idx, "close"], -2))
-                if re_execute_count == self.strategy.re_execute_count and  not is_position:
+                if re_execute_count == self.strategy.re_execute_count and not is_position:
                     continue
-                if ((curr_time >= self.strategy.start_time and not is_position and re_execute_count < self.strategy.re_execute_count)
-                        or (re_execute and not is_position)):
+                if ((curr_time >= self.strategy.start_time and not is_position
+                     and re_execute_count < self.strategy.re_execute_count) or (re_execute and not is_position)):
                     is_symbol_missing, day_df = utils.get_merged_opt_symbol_df(day_df, iron_condor_dict, day,
                                                                                self.strategy.timeframe)
                     if is_symbol_missing:
@@ -166,7 +174,6 @@ class OptBacktest:
                         total_exit_price = (1 * ce_short_exit_price + 1 * pe_short_exit_price +
                                             -1 * ce_hedge_exit_price + -1 * pe_hedge_exit_price)
                         runtime_pnl += total_exit_price
-                        # track_pnl.loc[day_df.loc[idx, "date"]] = total_exit_price
                         is_position = False
 
                         # re-execute only if:
@@ -187,7 +194,6 @@ class OptBacktest:
                         expiry_comp = self.data.get_expiry_comp_from_date(next_week_expiry_dt)
                         exit_date = exit_n_days_before_expiry
                         re_execute_count = 0
-
                     iron_condor_dict = utils.generate_iron_condor_strikes_and_symbols(
                         self.strategy.instrument, curr_atm_strike,
                         self.strategy.how_far_otm_short_point,

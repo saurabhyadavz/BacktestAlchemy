@@ -24,7 +24,7 @@ from backtest.analyzers.analyzers import Analyzers, DegenPlotter
 
 
 def run_positional_iron_condor():
-    strategy = Strategy(start_date="2019-01-01", end_date="2019-12-30",
+    strategy = Strategy(start_date="2016-01-01", end_date="2022-12-30",
                         instrument="BANKNIFTY", is_intraday=False,
                         start_time="10:00", end_time="10:00",
                         re_execute_count=1, trading_days_before_expiry=1,
@@ -32,6 +32,7 @@ def run_positional_iron_condor():
     data = DataProducer(strategy.instrument, strategy.start_date, strategy.end_date, strategy.timeframe)
     bt = OptBacktest(strategy, data)
     points = bt.backtest_positional_iron_condor()
+    points.to_csv("points.csv")
     degen_plotter = DegenPlotter(points, lot_size=25, strat_name="positional_iron_condor")
     degen_plotter.plot_all()
     analyzer = Analyzers()

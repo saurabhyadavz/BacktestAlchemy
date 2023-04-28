@@ -72,6 +72,7 @@ def get_all_expiry_info() -> list[dict[typing.Any]]:
 def get_expiry_dates(list_of_expiry_info_dict: list[dict[typing.Any, typing.Any]]):
     expiry_dates_list = [datetime.strptime(d['expiry_date'], '%Y-%m-%d').date()
                          for d in list_of_expiry_info_dict]
+    expiry_dates_list = sorted(expiry_dates_list)
     return expiry_dates_list
 
 
