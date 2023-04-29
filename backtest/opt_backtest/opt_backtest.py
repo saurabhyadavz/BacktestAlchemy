@@ -98,6 +98,7 @@ class OptBacktest:
         is_condition_satisfied = False
         exit_date = None
         runtime_pnl = 0
+        trade_taken_count = 0
         for day, day_df in day_groups:
             curr_week_expiry_dt = self.data.get_closet_expiry(day, week_number=0)
             next_week_expiry_dt = self.data.get_closet_expiry(day, week_number=1)
@@ -105,49 +106,58 @@ class OptBacktest:
                                                                       self.data.trading_days, curr_week_expiry_dt)
             exit_n_days_before_expiry = utils.get_n_days_before_date(self.strategy.trading_days_before_expiry,
                                                                      self.data.trading_days, next_week_expiry_dt)
+
+            # Checks if  current day is the entry day, and we don't have any positions
             if entry_n_days_before_expiry == day and not is_position:
+                self.backtest_logger.logger.info(f"{day} conditions satisfied for Entry")
                 re_execute_count = 0
                 exit_date = exit_n_days_before_expiry
-                is_condition_satisfied = True
-                entry_close_price = day_df.loc[day_df["date"].dt.time == self.strategy.start_time, "close"].iloc[0]
-                entry_atm_strike = int(round(entry_close_price, -2))
                 expiry_comp = self.data.get_expiry_comp_from_date(next_week_expiry_dt)
-                iron_condor_dict = utils.generate_iron_condor_strikes_and_symbols(
-                    self.strategy.instrument, entry_atm_strike,
-                    self.strategy.how_far_otm_short_point,
-                    self.strategy.how_far_otm_hedge_point, expiry_comp
-                )
+                self.backtest_logger.logger.info(f"{day}: {expiry_comp}")
+                is_condition_satisfied = True
 
             if not is_condition_satisfied and not is_position:
                 continue
+
             if is_position:
+                self.backtest_logger.logger.info(f"{day}: Getting OPT Symbols ")
                 is_symbol_missing, day_df = utils.get_merged_opt_symbol_df(day_df, iron_condor_dict, day,
                                                                            self.strategy.timeframe)
                 if is_symbol_missing:
-                    if exit_date == day:
-                        entry_close_price = day_df.loc[day_df["date"].dt.time == self.strategy.start_time, "close"].iloc[0]
-                        entry_atm_strike = int(round(entry_close_price, -2))
-                        expiry_comp = self.data.get_expiry_comp_from_date(next_week_expiry_dt)
-                        iron_condor_dict = utils.generate_iron_condor_strikes_and_symbols(
-                            self.strategy.instrument, entry_atm_strike,
-                            self.strategy.how_far_otm_short_point,
-                            self.strategy.how_far_otm_hedge_point, expiry_comp
-                        )
-                        is_position = False
-                    else:
-                        continue
+                    self.backtest_logger.logger.info(f"{day}: Symbol is missing for day: Trade Life Destroyed")
+                    is_position = False
+                    is_condition_satisfied = False
+                    continue
 
             day_df = day_df.reset_index(drop=True)
             for idx, row in day_df.iterrows():
                 curr_time = day_df.loc[idx, "date"].time()
                 curr_atm_strike = int(round(day_df.loc[idx, "close"], -2))
-                if re_execute_count == self.strategy.re_execute_count and not is_position:
+
+                # If re-execute limit is breached, and we don't have any positions and no trade was taken till now
+                # then continue
+                if re_execute_count == self.strategy.re_execute_count and not is_position and trade_taken_count > 0:
                     continue
-                if ((curr_time >= self.strategy.start_time and not is_position
-                     and re_execute_count < self.strategy.re_execute_count) or (re_execute and not is_position)):
+
+                # If it's the strategy start time, and we don't have any positions then take entry
+                # or if we want to execute, and we don't have any positions then re-execute
+                if (curr_time >= self.strategy.start_time and not is_position) or (re_execute and not is_position):
+                    self.backtest_logger.logger.info(f"{day}:  {curr_time} Taking Entry ")
+                    iron_condor_dict = utils.generate_iron_condor_strikes_and_symbols(
+                        self.strategy.instrument, curr_atm_strike,
+                        self.strategy.how_far_otm_short_point,
+                        self.strategy.how_far_otm_hedge_point, expiry_comp
+                    )
+                    self.backtest_logger.logger.info(f"{day}: Current Strike {curr_atm_strike} ")
+                    self.backtest_logger.logger.info(f"{day}:  Entry Condor: {iron_condor_dict} ")
                     is_symbol_missing, day_df = utils.get_merged_opt_symbol_df(day_df, iron_condor_dict, day,
                                                                                self.strategy.timeframe)
                     if is_symbol_missing:
+                        self.backtest_logger.logger.info(f"{day}:  {curr_time} Symbol is missing: Trade Life Destroyed ")
+                        is_position = False
+                        re_execute_count = 0
+                        re_execute = False
+                        is_condition_satisfied = False
                         break
                     ce_short_entry_price = day_df.loc[idx, f"{iron_condor_dict['ce_short_opt_symbol']}_close"]
                     pe_short_entry_price = day_df.loc[idx, f"{iron_condor_dict['pe_short_opt_symbol']}_close"]
@@ -155,12 +165,14 @@ class OptBacktest:
                     pe_hedge_entry_price = day_df.loc[idx, f"{iron_condor_dict['pe_hedge_opt_symbol']}_close"]
                     total_entry_price = (-1 * ce_short_entry_price + -1 * pe_short_entry_price +
                                          1 * ce_hedge_entry_price + 1 * pe_hedge_entry_price)
+                    trade_taken_count += 1
                     runtime_pnl += total_entry_price
-                    # track_pnl.loc[day_df.loc[idx, "date"]] = total_entry_price
                     is_position = True
                     if re_execute:
                         re_execute = False
                         re_execute_count += 1
+
+                # If we have position then check if any of strike becomes atm then exit
                 if is_position:
                     if (iron_condor_dict["ce_short_strike"] <= curr_atm_strike
                             or iron_condor_dict["pe_short_strike"] >= curr_atm_strike or
@@ -175,29 +187,28 @@ class OptBacktest:
                                             -1 * ce_hedge_exit_price + -1 * pe_hedge_exit_price)
                         runtime_pnl += total_exit_price
                         is_position = False
-
-                        # re-execute only if:
-                        # 1. current day is not exit day and curr time is greater than exit time
-                        # 2. re-execute count limit is not reached
-                        if (self.strategy.re_execute_count and
-                                self.strategy.re_execute_count != re_execute_count and
-                                not (day == exit_date and curr_time >= self.strategy.end_time)):
+                        self.backtest_logger.logger.info(f"{day}:  {curr_time} Taking Exit")
+                        # Re-Execute condition
+                        if self.strategy.re_execute_count and self.strategy.re_execute_count != re_execute_count:
                             re_execute = True
+                        # If its exit day and current time is more than end time then no need of re-execute
+                        if day == exit_date and curr_time >= self.strategy.end_time:
+                            re_execute = False
 
-                if ((re_execute_count == self.strategy.re_execute_count and day <= exit_date and not is_position)
-                        or (day == exit_date and not is_position)):
+                # Update trade life pnl if re-execute count equal to required re-execute count, and we don't have any
+                # positions or day is exit day, and we don't have any positions
+                if ((re_execute_count == self.strategy.re_execute_count and day <= exit_date and not is_position and trade_taken_count > 0)
+                        or (day == exit_date and not is_position and curr_time >= self.strategy.end_time)):
+                    self.backtest_logger.logger.info(f"{day}:  {curr_time} Trade Life End")
                     track_pnl.loc[day] = -1 * runtime_pnl
                     runtime_pnl = 0
-
-                if re_execute or (not is_position and day == exit_date):
                     if day == exit_date:
-                        expiry_comp = self.data.get_expiry_comp_from_date(next_week_expiry_dt)
+                        self.backtest_logger.logger.info(f"{day}:  {curr_time} Initiating Trade Life")
                         exit_date = exit_n_days_before_expiry
+                        trade_taken_count = 0
                         re_execute_count = 0
-                    iron_condor_dict = utils.generate_iron_condor_strikes_and_symbols(
-                        self.strategy.instrument, curr_atm_strike,
-                        self.strategy.how_far_otm_short_point,
-                        self.strategy.how_far_otm_hedge_point, expiry_comp
-                    )
+                        re_execute = False
+                        expiry_comp = self.data.get_expiry_comp_from_date(next_week_expiry_dt)
+
         track_pnl.dropna(inplace=True)
         return track_pnl
