@@ -1,5 +1,5 @@
 import typing
-from datetime import datetime, time
+from datetime import datetime, time, date
 from typing import Union
 from backtest.data import data
 import os
@@ -7,7 +7,10 @@ import pandas as pd
 
 BACKEND_URL = "http://127.0.0.1:8000"
 YY_MM_DD_FORMAT = "%Y-%m-%d"
-
+BNF_WEEKLY_EXP_START_DATE = date(2016, 6, 27)
+NF_WEEKLY_EXP_START_DATE = date(2019, 2, 11)
+BANKNIFTY_SYMBOL = "BANKNIFTY"
+NIFTY_SYMBOL = "NIFTY"
 
 def string_to_datetime(date_string: str) -> datetime:
     """
@@ -166,4 +169,3 @@ def get_n_days_before_date(n: int, trading_dates: list[datetime.date], date_to_f
         else:
             print(f"{n} days before {date_to_find} doesn't exist")
             return -1
-

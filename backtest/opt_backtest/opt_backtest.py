@@ -100,8 +100,8 @@ class OptBacktest:
         runtime_pnl = 0
         trade_taken_count = 0
         for day, day_df in day_groups:
-            curr_week_expiry_dt = self.data.get_closet_expiry(day, week_number=0)
-            next_week_expiry_dt = self.data.get_closet_expiry(day, week_number=1)
+            curr_week_expiry_dt = self.data.get_closet_expiry(self.strategy.instrument, day, week_number=0)
+            next_week_expiry_dt = self.data.get_closet_expiry(self.strategy.instrument, day, week_number=1)
             entry_n_days_before_expiry = utils.get_n_days_before_date(self.strategy.trading_days_before_expiry,
                                                                       self.data.trading_days, curr_week_expiry_dt)
             exit_n_days_before_expiry = utils.get_n_days_before_date(self.strategy.trading_days_before_expiry,
@@ -112,7 +112,7 @@ class OptBacktest:
                 self.backtest_logger.logger.info(f"{day} conditions satisfied for Entry")
                 re_execute_count = 0
                 exit_date = exit_n_days_before_expiry
-                expiry_comp = self.data.get_expiry_comp_from_date(next_week_expiry_dt)
+                expiry_comp = self.data.get_expiry_comp_from_date(self.strategy.instrument, next_week_expiry_dt)
                 self.backtest_logger.logger.info(f"{day}: {expiry_comp}")
                 is_condition_satisfied = True
 
@@ -208,7 +208,7 @@ class OptBacktest:
                         trade_taken_count = 0
                         re_execute_count = 0
                         re_execute = False
-                        expiry_comp = self.data.get_expiry_comp_from_date(next_week_expiry_dt)
+                        expiry_comp = self.data.get_expiry_comp_from_date(self.strategy.instrument, next_week_expiry_dt)
 
         track_pnl.dropna(inplace=True)
         return track_pnl

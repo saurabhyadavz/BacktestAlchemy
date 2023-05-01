@@ -5,6 +5,8 @@ import pandas as pd
 from backtest.utils import utils
 import requests
 
+from backtest.utils.utils import BANKNIFTY_SYMBOL, NIFTY_SYMBOL
+
 
 def resample_ohlc_df(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     """
@@ -46,13 +48,14 @@ def resample_ohlc_df(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def get_all_expiry_info() -> list[dict[typing.Any]]:
+def get_all_expiry_info(index: str) -> list[dict[typing.Any]]:
     """
     Functions fetches all the expiry dates
+        index(str): instrument name(BANKNIFTY/NIFTY)
     Returns:
-        list[dict[typing.Any]]: returns a list of dictionary containing(index, expiry_str, expiry_date)
+        list[dict[typing.Any]]: returns a list of dictionary containing(index, expiry_comp, expiry_date)
     """
-    url = f"{utils.BACKEND_URL}/nse/get_expiry/"
+    url = f"{utils.BACKEND_URL}/nse/get_expiry/{index}"
     response = requests.get(url)
     if response.status_code == 307:
         redirect_url = response.headers['Location']
@@ -78,7 +81,7 @@ def get_expiry_dates(list_of_expiry_info_dict: list[dict[typing.Any, typing.Any]
 
 def get_expiry_comp_dict(list_of_expiry_info_dict: list[dict[typing.Any, typing.Any]]):
     expiry_comp_dict = {
-        datetime.strptime(d['expiry_date'], '%Y-%m-%d').date(): d['expiry_str']
+        datetime.strptime(d['expiry_date'], '%Y-%m-%d').date(): d['expiry_comp']
         for d in list_of_expiry_info_dict
     }
     return expiry_comp_dict
@@ -141,15 +144,19 @@ class DataProducer:
         self.historical_df = self._fetch_spot_historical_data()
         self.resampled_historical_df = resample_ohlc_df(self.historical_df, self.timeframe)
         self.expiry_week = expiry_week
-        self.list_of_expiry_info_dict = get_all_expiry_info()
-        self.expiry_dates_list = get_expiry_dates(self.list_of_expiry_info_dict)
-        self.expiry_comp_dict = get_expiry_comp_dict(self.list_of_expiry_info_dict)
+        self.bnf_list_of_expiry_info_dict = get_all_expiry_info(BANKNIFTY_SYMBOL)
+        self.nf_list_of_expiry_info_dict = get_all_expiry_info(NIFTY_SYMBOL)
+        self.bnf_expiry_dates_list = get_expiry_dates(self.bnf_list_of_expiry_info_dict)
+        self.nf_expiry_dates_list = get_expiry_dates(self.nf_list_of_expiry_info_dict)
+        self.bnf_expiry_comp_dict = get_expiry_comp_dict(self.bnf_list_of_expiry_info_dict)
+        self.nf_expiry_comp_dict = get_expiry_comp_dict(self.nf_list_of_expiry_info_dict)
         self.trading_days = get_trading_days()
 
-    def get_closet_expiry(self, dt: datetime.date, week_number: int = 0) -> datetime.date:
+    def get_closet_expiry(self, index: str, dt: datetime.date, week_number: int = 0) -> datetime.date:
         """
         Returns the closest expiry given expiry(current week, next week and so on...)
         Args:
+            index(str): instrument(BANKNIFTY/NIFTY)
             dt(datetime.date): given date
             week_number(int): given week number to get the expiry date
 
@@ -157,7 +164,10 @@ class DataProducer:
             datetime.date: returns the closet expiry date based on the given week number(current week(0), next week(0) and so on...)
         """
         count = 0
-        for expiry_dt in self.expiry_dates_list:
+        expiry_dates_list = self.bnf_expiry_dates_list
+        if index == "NIFTY":
+            expiry_dates_list = self.nf_expiry_dates_list
+        for expiry_dt in expiry_dates_list:
             if expiry_dt >= dt:
                 if week_number == count:
                     return expiry_dt
@@ -165,17 +175,21 @@ class DataProducer:
         print("Error: Couldn't find closest expiry date")
         return None
 
-    def get_expiry_comp_from_date(self, expiry_date: datetime.date) -> str:
+    def get_expiry_comp_from_date(self, index: str, expiry_date: datetime.date) -> str:
         """
         Returns expiry component for given expiry date
         Args:
+            index(str): instrument (ex:BANKNIFTY/NIFTY)
             expiry_date(datetime.date): given expiry date
 
         Returns:
             str: returns a string expiry component
         """
         try:
-            return self.expiry_comp_dict[expiry_date]
+            expiry_comp_dict = self.bnf_expiry_comp_dict
+            if index == "NIFTY":
+                expiry_comp_dict = self.nf_expiry_comp_dict
+            return expiry_comp_dict[expiry_date]
         except TypeError as e:
             print(f"Error in func(get_expiry_comp_from_date): {e}")
 

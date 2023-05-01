@@ -1,8 +1,10 @@
 from typing import Union
 from backtest.utils import utils
 
+
 class Strategy:
-    def __init__(self, start_date: str, end_date: str, instrument: str, is_intraday: bool, start_time: str, end_time: str,
+    def __init__(self, start_date: str, end_date: str, instrument: str, is_intraday: bool, start_time: str,
+                 end_time: str,
                  stop_loss: Union[int, float] = None, target: Union[int, float] = None,
                  per_trade_commission: float = 0, slippage: float = 0,
                  re_entry_count: int = 0, re_execute_count: int = 0,
