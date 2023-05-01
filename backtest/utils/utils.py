@@ -110,13 +110,13 @@ def generate_iron_condor_strikes_and_symbols(instrument: str, atm_strike: int, h
     return iron_condor_dict
 
 
-def get_merged_opt_symbol_df(df: pd.DataFrame, iron_condor_dict: dict[str, typing.Any],
-                             curr_date: datetime.date, timeframe: str) -> tuple[bool, pd.DataFrame]:
+def get_merged_opt_symbol_df(df: pd.DataFrame, trading_symbols: list[str], curr_date: datetime.date,
+                             timeframe: str) -> tuple[bool, pd.DataFrame]:
     """
     Merges option symbol close price with given df
     Args:
         df(pd.DataFrame): given dataframe
-        iron_condor_dict(dict[str, typing.Any]): iron condor info dictionary
+        trading_symbols(list[str]): iron condor info dictionary
         curr_date(datetime.date): current date
         timeframe(str): timeframe for resampling options df
 
@@ -124,7 +124,7 @@ def get_merged_opt_symbol_df(df: pd.DataFrame, iron_condor_dict: dict[str, typin
         tuple[bool, pd.DataFrame]: returns df merged with option symbol close price and option symbol
     """
     is_symbol_missing = False
-    for opt_symbol in iron_condor_dict["trading_symbols"]:
+    for opt_symbol in trading_symbols:
         opt_symbol_col = f"{opt_symbol}_close"
         if opt_symbol_col in df.columns:
             continue
