@@ -5,8 +5,9 @@ import seaborn as sns
 import calendar
 import os
 
+
 class Analyzers:
-    def get_metrics(self, df, strat=''):
+    def get_metrics(self, df, strat='', unable_to_trade_days: int = 0):
         df = df.dropna()
         ret = df.values
         col = df.name
@@ -56,7 +57,7 @@ class Analyzers:
 
         metrics = pd.DataFrame(columns=['Strategy', 'Total Trades', 'Total Points', 'Wins', 'Losses', 'Win Rate', 'RR',
                                         'PF', 'OAPF', 'Pts per Trade', 'Exp_in_R', 'Kelly', 'Max DD', 'CALMAR',
-                                        'Sharpe', 'Sortino', 'Max Win', 'Max Loss', 'Avg Win', 'Avg Loss'])
+                                        'Sharpe', 'Sortino', 'Max Win', 'Max Loss', 'Avg Win', 'Avg Loss', 'Unable to trade days'])
         metrics = pd.concat([metrics, pd.DataFrame({'Strategy': col,
                                                     'Total Trades': tot_trades,
                                                     'Total Points': tot_pts,
@@ -76,7 +77,8 @@ class Analyzers:
                                                     'Max Win': max_win,
                                                     'Max Loss': max_loss,
                                                     'Avg Win': avg_win,
-                                                    'Avg Loss': avg_loss}, index=[0])], ignore_index=True)
+                                                    'Avg Loss': avg_loss,
+                                                    'Unable to trade days': unable_to_trade_days}, index=[0])], ignore_index=True)
         return metrics.T
 
 

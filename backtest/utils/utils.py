@@ -12,6 +12,7 @@ NF_WEEKLY_EXP_START_DATE = date(2019, 2, 11)
 BANKNIFTY_SYMBOL = "BANKNIFTY"
 NIFTY_SYMBOL = "NIFTY"
 
+
 def string_to_datetime(date_string: str) -> datetime:
     """
     Converts a string to a datetime object.
@@ -169,3 +170,84 @@ def get_n_days_before_date(n: int, trading_dates: list[datetime.date], date_to_f
         else:
             print(f"{n} days before {date_to_find} doesn't exist")
             return -1
+
+
+def generate_opt_symbols_from_strike(instrument: str, atm_strike: int, expiry_comp: str, *args) -> list[str]:
+    """
+    Generates strikes based on instrument, atm strike, expiry component and all given strikes in args
+    Args:
+        instrument(str): instrument name(ex: NIFTY/BANKNIFTY)
+        atm_strike(int): at the money strike
+        expiry_comp(str): five letter expiry keyword(ex: 16JAN, 16609, 17N23)
+        *args(typing.Tuple[typing.Any, ...]): strikes argument like (OTM1, OTM2, ITM1, ITM2, etc)
+
+    Returns:
+        list[str]: returns list of option symbols
+    """
+    opt_symbols = []
+    strike_interval = 100
+    if instrument == "NIFTY":
+        strike_interval = 50
+    for arg in args:
+        if arg.startswith("ATM"):
+            opt_symbols.append(get_opt_symbol(instrument, expiry_comp, atm_strike, "CE"))
+            opt_symbols.append(get_opt_symbol(instrument, expiry_comp, atm_strike, "PE"))
+        elif arg.startswith("OTM"):
+            otm_ce_strike = atm_strike + int(arg[3:]) * strike_interval
+            otm_pe_strike = atm_strike - int(arg[3:]) * strike_interval
+            opt_symbols.append(get_opt_symbol(instrument, expiry_comp, otm_ce_strike, "CE"))
+            opt_symbols.append(get_opt_symbol(instrument, expiry_comp, otm_pe_strike, "PE"))
+        elif arg.startswith("ITM"):
+            itm_ce_strike = atm_strike - int(arg[3:]) * strike_interval
+            itm_pe_strike = atm_strike + int(arg[3:]) * strike_interval
+            opt_symbols.append(get_opt_symbol(instrument, expiry_comp, itm_ce_strike, "CE"))
+            opt_symbols.append(get_opt_symbol(instrument, expiry_comp, itm_pe_strike, "PE"))
+        else:
+            raise ValueError(f'Invalid argument: {arg}')
+    return opt_symbols
+
+
+def get_combined_premium_df_from_trading_symbols(df: pd.DataFrame, trading_symbols: list[str], curr_date: datetime.date,
+                                                 timeframe: str) -> tuple[bool, pd.DataFrame]:
+    """
+    Calculates combined premium of given strikes and returns it
+    Args:
+        df(pd.DataFrame): given dataframe
+        trading_symbols(list[str]): iron condor info dictionary
+        curr_date(datetime.date): current date
+        timeframe(str): timeframe for resampling options df
+
+    Returns:
+        tuple[bool, pd.DataFrame]: returns df merged with option symbol close price and option symbol
+    """
+    close_columns = []
+    open_columns = []
+    high_columns = []
+    low_columns = []
+    volume_columns = []
+    is_symbol_missing = False
+    for opt_symbol in trading_symbols:
+        opt_symbol_col = f"{opt_symbol}_close"
+        if opt_symbol_col in df.columns:
+            continue
+        option_df = data.fetch_options_data_and_resample(opt_symbol, curr_date, curr_date, timeframe)
+        if option_df.empty:
+            is_symbol_missing = True
+            with open(os.path.join(os.getcwd(), "missing_symbols.txt"), "a") as f:
+                f.write(f"{curr_date} {opt_symbol}\n")
+        else:
+            close_columns.append(f"{opt_symbol}_close")
+            open_columns.append(f"{opt_symbol}_open")
+            high_columns.append(f"{opt_symbol}_high")
+            low_columns.append(f"{opt_symbol}_low")
+            volume_columns.append(f"{opt_symbol}_volume")
+            df = pd.merge(df, option_df, on='date')
+    if is_symbol_missing:
+        return is_symbol_missing, df
+    else:
+        df["combined_premium_close"] = df[close_columns].sum(axis=1)
+        df["combined_premium_open"] = df[open_columns].sum(axis=1)
+        df["combined_premium_high"] = df[high_columns].sum(axis=1)
+        df["combined_premium_low"] = df[low_columns].sum(axis=1)
+        df["combined_premium_volume"] = df[volume_columns].sum(axis=1)
+        return is_symbol_missing, df

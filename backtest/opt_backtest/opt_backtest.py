@@ -5,6 +5,7 @@ from backtest.degen_logger.degen_logger import DegenLogger
 from backtest.strategy.strategy import Strategy
 from backtest.data.data import DataProducer
 from backtest.utils import utils
+import pandas_ta as ta
 
 
 class OptBacktest:
@@ -116,7 +117,8 @@ class OptBacktest:
 
             if is_position:
                 self.backtest_logger.logger.info(f"{day}: Getting OPT Symbols ")
-                is_symbol_missing, day_df = utils.get_merged_opt_symbol_df(day_df, iron_condor_dict["trading_symbols"], day,
+                is_symbol_missing, day_df = utils.get_merged_opt_symbol_df(day_df, iron_condor_dict["trading_symbols"],
+                                                                           day,
                                                                            self.strategy.timeframe)
                 if is_symbol_missing:
                     self.backtest_logger.logger.info(f"{day}: Symbol is missing for day: Trade Life Destroyed")
@@ -149,7 +151,8 @@ class OptBacktest:
                                                                                iron_condor_dict["trading_symbols"], day,
                                                                                self.strategy.timeframe)
                     if is_symbol_missing:
-                        self.backtest_logger.logger.info(f"{day}:  {curr_time} Symbol is missing: Trade Life Destroyed ")
+                        self.backtest_logger.logger.info(
+                            f"{day}:  {curr_time} Symbol is missing: Trade Life Destroyed ")
                         is_position = False
                         re_execute_count = 0
                         re_execute = False
@@ -193,7 +196,8 @@ class OptBacktest:
 
                 # Update trade life pnl if re-execute count equal to required re-execute count, and we don't have any
                 # positions or day is exit day, and we don't have any positions
-                if ((re_execute_count == self.strategy.re_execute_count and day <= exit_date and not is_position and trade_taken_count > 0)
+                if ((
+                        re_execute_count == self.strategy.re_execute_count and day <= exit_date and not is_position and trade_taken_count > 0)
                         or (day == exit_date and not is_position and curr_time >= self.strategy.end_time)):
                     self.backtest_logger.logger.info(f"{day}:  {curr_time} Trade Life End")
                     track_pnl.loc[day] = -1 * runtime_pnl
@@ -208,3 +212,68 @@ class OptBacktest:
 
         track_pnl.dropna(inplace=True)
         return track_pnl
+
+    def backtest_combined_premium_vwap(self):
+        df = self.data.resampled_historical_df
+        df["day"] = df["date"].dt.date
+        df["Points"] = 0
+        track_pnl = pd.Series(np.nan, index=df['date'].dt.date.unique())
+        day_groups = df.groupby("day")
+        unable_to_trade_days = 0
+        for day, day_df in day_groups:
+            # Getting expiry
+            curr_week_expiry_dt = self.data.get_closet_expiry(self.strategy.instrument, day,
+                                                              week_number=self.strategy.expiry_week)
+            expiry_comp = self.data.get_expiry_comp_from_date(self.strategy.instrument, curr_week_expiry_dt)
+            entry_close_price = day_df.loc[day_df["date"].dt.time == self.strategy.start_time, "close"].iloc[0]
+            entry_atm = int(round(entry_close_price, -2))
+            self.backtest_logger.logger.info(f"Start: {day}, atm: {entry_atm}")
+            opt_symbols = utils.generate_opt_symbols_from_strike(self.strategy.instrument, entry_atm,
+                                                                 expiry_comp, "ATM", "OTM1", "OTM2", "OTM3")
+            self.backtest_logger.logger.info(f"symbols: {opt_symbols}")
+            is_symbol_missing, day_df = utils.get_combined_premium_df_from_trading_symbols(day_df, opt_symbols,
+                                                                                           day,
+                                                                                           self.strategy.timeframe)
+            day_df.to_csv("check.csv")
+
+            if is_symbol_missing:
+                self.backtest_logger.logger.info(f"{day}: Symbol is missing: Not taking trade")
+                unable_to_trade_days += 1
+                continue
+            day_df.set_index("date", inplace=True)
+            # Calculate vwap on combined premium
+            day_df["vwap"] = ta.vwap(high=day_df["combined_premium_close"],
+                                     low=day_df["combined_premium_close"],
+                                     close=day_df["combined_premium_close"],
+                                     volume=day_df["combined_premium_volume"])
+            day_df = day_df.reset_index()
+            is_position = False
+            running_pnl = 0
+
+            for idx, row in day_df.iterrows():
+                curr_time = day_df.loc[idx, "date"].time()
+                if curr_time >= self.strategy.end_time:
+                    self.backtest_logger.logger.info(f"Exit: End of trade {curr_time}")
+                    if is_position:
+                        buy_price = day_df.loc[idx, "combined_premium_close"]
+                        running_pnl += buy_price * 1
+                    break
+                if curr_time >= self.strategy.start_time and not is_position:
+                    if day_df.loc[idx, "combined_premium_close"] < day_df.loc[idx, "vwap"]:
+                        self.backtest_logger.logger.info(
+                            f"Entry {curr_time}: close: {day_df.loc[idx, ['combined_premium_close']]}, vwap: {day_df.loc[idx, 'vwap']}")
+                        short_price = day_df.loc[idx, "combined_premium_close"]
+                        running_pnl += short_price * -1
+                        is_position = True
+
+                if is_position and day_df.loc[idx, "combined_premium_close"] > day_df.loc[idx, "vwap"]:
+                    self.backtest_logger.logger.info(
+                        f"Exit {curr_time}: close: {day_df.loc[idx, ['combined_premium_close']]},"
+                        f" vwap: {day_df.loc[idx, 'vwap']}")
+                    buy_price = day_df.loc[idx, "combined_premium_close"]
+                    running_pnl += buy_price * 1
+                    is_position = False
+
+            track_pnl.loc[day] = -1 * running_pnl
+        track_pnl.dropna(inplace=True)
+        return unable_to_trade_days, track_pnl

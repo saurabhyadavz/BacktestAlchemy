@@ -32,12 +32,15 @@ def resample_ohlc_df(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
             df_range = df_range.rename_axis("date")
             df_range = df_range.merge(day_df, how='left', left_index=True, right_index=True)
             df_range.fillna(method='ffill', inplace=True)
-            resampled_df = df_range.resample(timeframe, origin="start").agg({
+            resample_cols = {
                 "open": "first",
                 "high": "max",
                 "low": "min",
                 "close": "last"
-            })
+            }
+            if "volume" in df_range.columns:
+                resample_cols["volume"] = "sum"
+            resampled_df = df_range.resample(timeframe, origin="start").agg(resample_cols)
             resampled_df.reset_index(inplace=True)
             resampled_df.fillna(method='ffill', inplace=True)
             resampled_dfs.append(resampled_df)
@@ -101,8 +104,11 @@ def fetch_options_data_and_resample(opt_symbol, start_date, end_date, timeframe)
             df = pd.DataFrame(data)
             df["date"] = pd.to_datetime(df["date"])
             resampled_df = resample_ohlc_df(df, timeframe)
-            resampled_df.drop(["open", "high", "low"], axis=1, inplace=True)
-            resampled_df = resampled_df.rename(columns={"close": f"{opt_symbol}_close"})
+            resampled_df = resampled_df.rename(columns={"close": f"{opt_symbol}_close",
+                                                        "open": f"{opt_symbol}_open",
+                                                        "high": f"{opt_symbol}_high",
+                                                        "low": f"{opt_symbol}_low",
+                                                        "volume": f"{opt_symbol}_volume"})
             return resampled_df
         else:
             print(f"Error fetching data for: {opt_symbol}")
@@ -113,8 +119,11 @@ def fetch_options_data_and_resample(opt_symbol, start_date, end_date, timeframe)
         df = pd.DataFrame(data)
         df["date"] = pd.to_datetime(df["date"])
         resampled_df = resample_ohlc_df(df, timeframe)
-        resampled_df.drop(["open", "high", "low"], axis=1, inplace=True)
-        resampled_df = resampled_df.rename(columns={"close": f"{opt_symbol}_close"})
+        resampled_df = resampled_df.rename(columns={"close": f"{opt_symbol}_close",
+                                                    "open": f"{opt_symbol}_open",
+                                                    "high": f"{opt_symbol}_high",
+                                                    "low": f"{opt_symbol}_low",
+                                                    "volume": f"{opt_symbol}_volume"})
         return resampled_df
     else:
         print(f"Error occurred while getting option data for {opt_symbol} for {start_date}")

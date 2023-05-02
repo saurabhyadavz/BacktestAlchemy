@@ -19,9 +19,11 @@ def run_simple_straddle():
     bt = OptBacktest(strategy, data)
     points = bt.backtest_simple_straddle()
     points.to_csv("points.csv")
-    # analyzer = Analyzers()
-    # metrics = analyzer.get_metrics(points, strat="920 STRADDLE 20% SL MOVE TO COST")
-    # print(metrics)
+    degen_plotter = DegenPlotter(points, lot_size=25, strat_name="Straddle 925")
+    degen_plotter.plot_all()
+    analyzer = Analyzers()
+    metrics = analyzer.get_metrics(points, strat="Straddle 925")
+    metrics.to_csv(os.path.join(os.getcwd(), "metrices.csv"))
 
 
 def run_positional_iron_condor():
@@ -34,12 +36,27 @@ def run_positional_iron_condor():
     bt = OptBacktest(strategy, data)
     points = bt.backtest_positional_iron_condor()
     points.to_csv("points.csv")
-    # degen_plotter = DegenPlotter(points, lot_size=25, strat_name="positional_iron_condor")
-    # degen_plotter.plot_all()
-    # analyzer = Analyzers()
-    # metrics = analyzer.get_metrics(points, strat="Positional Iron Condor")
-    # metrics.to_csv(os.path.join(os.getcwd(), "metrices.csv"))
+    degen_plotter = DegenPlotter(points, lot_size=25, strat_name="Positional Iron Condor")
+    degen_plotter.plot_all()
+    analyzer = Analyzers()
+    metrics = analyzer.get_metrics(points, strat="Positional Iron Condor")
+    metrics.to_csv(os.path.join(os.getcwd(), "metrices.csv"))
+
+
+def run_combined_premium():
+    strategy = Strategy(start_date="2018-01-01", end_date="2022-12-30",
+                        instrument="BANKNIFTY", is_intraday=True,
+                        start_time="9:20", end_time="15:10", timeframe="5min", expiry_week=0)
+    data = DataProducer(strategy.instrument, strategy.start_date, strategy.end_date, strategy.timeframe)
+    bt = OptBacktest(strategy, data)
+    unable_to_trade_days, points = bt.backtest_combined_premium_vwap()
+    points.to_csv("points.csv")
+    degen_plotter = DegenPlotter(points, lot_size=25, strat_name="Combined Premium")
+    degen_plotter.plot_all()
+    analyzer = Analyzers()
+    metrics = analyzer.get_metrics(points, strat="Combined Premium")
+    metrics.to_csv(os.path.join(os.getcwd(), "metrices.csv"))
 
 
 if __name__ == "__main__":
-    run_simple_straddle()
+    run_combined_premium()
