@@ -122,12 +122,14 @@ class DegenPlotter:
         monthly_returns.sort_values(['year', 'month_name'], inplace=True)
         monthly_returns_pivot = monthly_returns.pivot(index='year', columns='month_name', values='points')
         plt.figure(figsize=(20, 15))
-        sns.heatmap(data=monthly_returns_pivot, cmap='RdYlGn', annot=True, fmt='.2f')
+        cmap = sns.color_palette(["red", "lightgreen"])
+        sns.heatmap(data=monthly_returns_pivot, cmap=cmap, annot=True, fmt='.2f', center=0,
+                    vmin=monthly_returns_pivot.values.min(), vmax=monthly_returns_pivot.values.max(),
+                    linecolor='white', linewidths=1,square=True, xticklabels=True, cbar=False)
         plt.title('Total Returns Month-wise')
         plt.xlabel('Month')
         plt.ylabel('Year')
         plt.savefig(self.monthly_report_plot_path)
-
     def plot_all(self):
         self.plot_curve()
         self.plot_monthly_report()
