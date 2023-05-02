@@ -4,11 +4,111 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import calendar
 import os
+from backtest.utils.utils import get_position_size_and_margin
 
 
 class Analyzers:
-    def get_metrics(self, df, strat='', unable_to_trade_days: int = 0):
+    def __init__(self, capital: int, instrument: str):
+        self.capital = capital
+        self.position_size, self.margin_required = get_position_size_and_margin(capital, instrument)
+
+
+    def get_new_matrices(self, daily_points_series: pd.Series, strat='', unable_to_trade_days: int = 0):
+        df = pd.DataFrame(daily_points_series, columns=['points'])
+        df = df.reset_index()
+        df.columns = ['date', 'points']
+        df["date"] = pd.to_datetime(df["date"])
+        df.set_index("date", inplace=True)
         df = df.dropna()
+
+        # Calculate total trades
+        total_trades = len(df)
+
+        # Calculate total wins
+        total_wins = len(df[df['points'] > 0])
+
+        # Calculate total losses
+        total_losses = len(df[df['points'] < 0])
+
+        # Calculate total points
+        total_points = np.sum(df['points'])
+
+        # Calculate win points
+        win_points = np.sum(df[df['points'] > 0]['points'])
+
+        # Calculate loss points
+        loss_points = np.sum(df[df['points'] < 0]['points'])
+
+        # Calculate max win
+        max_win = np.max(df['points'])
+
+        # Calculate max loss
+        max_loss = np.min(df['points'])
+
+        # Calculate max drawdown
+        cumulative_points = np.cumsum(df['points'])
+        max_drawdown = np.max(np.maximum.accumulate(cumulative_points) - cumulative_points)
+
+        # Calculate calmar
+        calmar = (total_points / max_drawdown) if max_drawdown > 0 else 0
+
+        # Calculate win rate
+        win_rate = (total_wins / total_trades) * 100
+
+        # Calculate average points on winning days
+        avg_points_on_winning_days = np.mean(df[df['points'] > 0]['points'])
+
+        # Calculate average loss on losing days
+        avg_loss_on_losing_days = np.mean(df[df['points'] < 0]['points'])
+
+        points_mean = np.mean(df['points'])
+
+        # Calculate max loss day
+        max_loss_day = df[df['points'] == max_loss].index[0]
+
+        # Calculate max win day
+        max_win_day = df[df['points'] == max_win].index[0]
+
+        # Calculate sharpe ratio
+        sharpe = (np.sqrt(252) * points_mean) / np.std(df['points'])
+
+        # Calculate sortino ratio
+        down_dev = np.where(df['points'] < 0, df['points'], 0).std()
+        sortino = (np.sqrt(252) * points_mean)/ down_dev
+        # print(df)
+
+        # Calculate average monthly ROI
+        monthly_returns = df['points'].resample('M').sum()
+        average_monthly_roi = np.mean(monthly_returns / total_points) * 100
+
+        # Print the results
+        print("Total Trades:", round(total_trades, 2))
+        print("Total Wins:",  round(total_wins, 2))
+        print("Total Losses:",  round(total_losses, 2))
+        print("Total Points:",  round(total_points, 2))
+        print("Win Points:",  round(win_points, 2))
+        print("Loss Points:",  round(loss_points, 2))
+        print("Max Win:",  round(max_win, 2))
+        print("Max Loss:",  round(max_loss, 2))
+        print("Max Win Day:", max_win_day.date())
+        print("Max Loss Day:", max_loss_day.date())
+        print("Max Drawdown:",  round(max_drawdown, 2))
+        print("Calmar:",  round(calmar, 2))
+        print("Win Rate (%):",  round(win_rate, 2))
+        print("Avg Points on Winning Days:",  round(avg_points_on_winning_days, 2))
+        print("Avg Loss on Losing Days:",  round(avg_loss_on_losing_days, 2))
+        print("Sharpe Ratio:",  round(sharpe, 2))
+        print("Sortino Ratio:",  round(sortino, 2))
+        print("Average Monthly ROI (%):", average_monthly_roi)
+
+
+    def get_metrics(self, daily_points_series: pd.Series, strat='', unable_to_trade_days: int = 0):
+        df = pd.DataFrame(daily_points_series, columns=['points'])
+        df = df.reset_index()
+        df.columns = ['Date', 'points']
+        print(df)
+        df = df.dropna()
+
         ret = df.values
         col = df.name
 
@@ -57,14 +157,15 @@ class Analyzers:
 
         metrics = pd.DataFrame(columns=['Strategy', 'Total Trades', 'Total Points', 'Wins', 'Losses', 'Win Rate', 'RR',
                                         'PF', 'OAPF', 'Pts per Trade', 'Exp_in_R', 'Kelly', 'Max DD', 'CALMAR',
-                                        'Sharpe', 'Sortino', 'Max Win', 'Max Loss', 'Avg Win', 'Avg Loss', 'Unable to trade days'])
+                                        'Sharpe', 'Sortino', 'Max Win', 'Max Loss', 'Avg Win', 'Avg Loss',
+                                        'Unable to trade days'])
         metrics = pd.concat([metrics, pd.DataFrame({'Strategy': col,
                                                     'Total Trades': tot_trades,
-                                                    'Total Points': tot_pts,
+                                                    'Total Points': tot_pts * self.lot_size,
                                                     'Wins': tot_wins,
                                                     'Losses': tot_losses,
                                                     'Win Rate': win_rate,
-                                                    'Pts per Trade': avg_pts,
+                                                    'Pts per Trade': avg_pts * self.lot_size,
                                                     'RR': RR,
                                                     'PF': PF,
                                                     'OAPF': OAPF,
@@ -78,7 +179,8 @@ class Analyzers:
                                                     'Max Loss': max_loss,
                                                     'Avg Win': avg_win,
                                                     'Avg Loss': avg_loss,
-                                                    'Unable to trade days': unable_to_trade_days}, index=[0])], ignore_index=True)
+                                                    'Unable to trade days': unable_to_trade_days}, index=[0])],
+                            ignore_index=True)
         return metrics.T
 
 
@@ -125,11 +227,12 @@ class DegenPlotter:
         cmap = sns.color_palette(["red", "lightgreen"])
         sns.heatmap(data=monthly_returns_pivot, cmap=cmap, annot=True, fmt='.2f', center=0,
                     vmin=monthly_returns_pivot.values.min(), vmax=monthly_returns_pivot.values.max(),
-                    linecolor='white', linewidths=1,square=True, xticklabels=True, cbar=False)
+                    linecolor='white', linewidths=1, square=True, xticklabels=True, cbar=False)
         plt.title('Total Returns Month-wise')
         plt.xlabel('Month')
         plt.ylabel('Year')
         plt.savefig(self.monthly_report_plot_path)
+
     def plot_all(self):
         self.plot_curve()
         self.plot_monthly_report()

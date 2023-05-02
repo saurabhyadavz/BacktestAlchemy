@@ -1,9 +1,13 @@
 ###################### adding project path to python path
 import sys
+import random
+import pandas as pd
 
 sys.path.append(r"C:\Users\DeGenOne\degen-money-backtest")
 #####################
 import os
+import concurrent.futures
+from datetime import date, timedelta
 from backtest.data.data import DataProducer
 from backtest.strategy.strategy import Strategy
 from backtest.opt_backtest.opt_backtest import OptBacktest
@@ -11,7 +15,7 @@ from backtest.analyzers.analyzers import Analyzers, DegenPlotter
 
 
 def run_simple_straddle():
-    strategy = Strategy(start_date="2016-01-01", end_date="2022-12-30",
+    strategy = Strategy(start_date="2018-01-01", end_date="2019-12-30",
                         instrument="NIFTY", is_intraday=True,
                         start_time="9:25", end_time="15:00",
                         stop_loss=0.2, move_sl_to_cost=True)
@@ -36,6 +40,7 @@ def run_positional_iron_condor():
     bt = OptBacktest(strategy, data)
     points = bt.backtest_positional_iron_condor()
     points.to_csv("points.csv")
+
     degen_plotter = DegenPlotter(points, lot_size=25, strat_name="Positional Iron Condor")
     degen_plotter.plot_all()
     analyzer = Analyzers()
@@ -43,20 +48,52 @@ def run_positional_iron_condor():
     metrics.to_csv(os.path.join(os.getcwd(), "metrices.csv"))
 
 
-def run_combined_premium():
-    strategy = Strategy(start_date="2018-01-01", end_date="2022-12-30",
+def run_combined_premium(start_date: str, end_date: str):
+    strategy = Strategy(start_date=start_date, end_date=end_date,
                         instrument="BANKNIFTY", is_intraday=True,
                         start_time="9:20", end_time="15:10", timeframe="5min", expiry_week=0)
     data = DataProducer(strategy.instrument, strategy.start_date, strategy.end_date, strategy.timeframe)
     bt = OptBacktest(strategy, data)
     unable_to_trade_days, points = bt.backtest_combined_premium_vwap()
-    points.to_csv("points.csv")
-    degen_plotter = DegenPlotter(points, lot_size=25, strat_name="Combined Premium")
+    points.to_csv("combined_premium.csv")
+    degen_plotter = DegenPlotter(points, lot_size=25, strat_name="Combined Premium VWAP")
     degen_plotter.plot_all()
-    analyzer = Analyzers()
-    metrics = analyzer.get_metrics(points, strat="Combined Premium")
-    metrics.to_csv(os.path.join(os.getcwd(), "metrices.csv"))
+    analyzer = Analyzers(lot_size=25)
+    metrics = analyzer.get_new_matrices(points, strat="Combined Premium VWAP", unable_to_trade_days=unable_to_trade_days)
+    # metrics.get_new_matrices(points)
+    # metrics.to_csv(os.path.join(os.getcwd(), "metrices.csv"))
 
 
 if __name__ == "__main__":
-    run_combined_premium()
+    run_combined_premium("2019-01-01", "2019-01-31")
+    # total_unable_to_trade_days = 0
+    # points_list = []
+    # import time
+    # start_time = time.time()
+    #
+    # with concurrent.futures.ThreadPoolExecutor(max_workers=7) as executor:
+    #     future_results = []
+    #     for year in range(2016, 2023):
+    #         start_date = date(year, 1, 1).strftime('%Y-%m-%d')
+    #         end_date = date(year, 12, 31).strftime('%Y-%m-%d')
+    #         print(start_date, end_date)
+    #         future = executor.submit(run_combined_premium, start_date, end_date)
+    #         future_results.append(future)
+    #
+    #     for future in concurrent.futures.as_completed(future_results):
+    #         unable_to_trade_days, points = future.result()
+    #         randomm = random.randint(0, 100)
+    #         points.to_csv(f"{randomm}_points.csv")
+    #         total_unable_to_trade_days += unable_to_trade_days
+    #         points_list.append(points)
+    #
+    # df = pd.concat(points_list)
+    #
+    # # df = df.sort_values(by='date')
+    # df.to_csv("points.csv")
+    #
+    # end_time = time.time()
+    # total_time = end_time - start_time
+    #
+    # print(f'The program took {total_time:.2f} seconds to run.')
+

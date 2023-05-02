@@ -11,6 +11,10 @@ BNF_WEEKLY_EXP_START_DATE = date(2016, 6, 27)
 NF_WEEKLY_EXP_START_DATE = date(2019, 2, 11)
 BANKNIFTY_SYMBOL = "BANKNIFTY"
 NIFTY_SYMBOL = "NIFTY"
+BANKNIFTY_LOT_SIZE = 25
+NIFTY_LOT_SIZE = 50
+BANKNIFTY_MARGIN_REQUIRED = 1800000
+NIFTY_MARGIN_REQUIRED = 1300000
 
 
 def string_to_datetime(date_string: str) -> datetime:
@@ -251,3 +255,21 @@ def get_combined_premium_df_from_trading_symbols(df: pd.DataFrame, trading_symbo
         df["combined_premium_low"] = df[low_columns].sum(axis=1)
         df["combined_premium_volume"] = df[volume_columns].sum(axis=1)
         return is_symbol_missing, df
+
+
+def get_position_size_and_margin(capital: int, instrument: str) -> tuple[int, int]:
+    """
+    Calculates position size and margin required on given capital
+    Args:
+        capital(int): capital
+        instrument(str): instrument name(BANKNIFTY/NIFTY)
+
+    Returns:
+        tuple[int, int]: returns tuple of position size and margin required
+    """
+    if instrument == "BANKNIFTY":
+        position_size = (capital // BANKNIFTY_MARGIN_REQUIRED) * BANKNIFTY_LOT_SIZE
+        return position_size, position_size * BANKNIFTY_MARGIN_REQUIRED
+
+    position_size = (capital // NIFTY_MARGIN_REQUIRED) * NIFTY_LOT_SIZE
+    return position_size, position_size * NIFTY_MARGIN_REQUIRED

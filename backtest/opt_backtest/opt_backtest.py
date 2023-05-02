@@ -234,7 +234,6 @@ class OptBacktest:
             is_symbol_missing, day_df = utils.get_combined_premium_df_from_trading_symbols(day_df, opt_symbols,
                                                                                            day,
                                                                                            self.strategy.timeframe)
-            day_df.to_csv("check.csv")
 
             if is_symbol_missing:
                 self.backtest_logger.logger.info(f"{day}: Symbol is missing: Not taking trade")
