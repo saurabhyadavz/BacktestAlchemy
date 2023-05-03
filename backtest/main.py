@@ -1,11 +1,9 @@
-###################### adding project path to python path
+# Adding project path to PYTHONPATH
 import sys
-import random
-import pandas as pd
-
-sys.path.append(r"C:\Users\DeGenOne\degen-money-backtest")
-#####################
 import os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import concurrent.futures
 from datetime import date, timedelta
 from backtest.data.data import DataProducer
@@ -58,14 +56,14 @@ def run_combined_premium(start_date: str, end_date: str):
     points.to_csv("combined_premium.csv")
     degen_plotter = DegenPlotter(points, lot_size=25, strat_name="Combined Premium VWAP")
     degen_plotter.plot_all()
-    analyzer = Analyzers(lot_size=25)
+    analyzer = Analyzers(capital=180000, instrument=strategy.instrument)
     metrics = analyzer.get_new_matrices(points, strat="Combined Premium VWAP", unable_to_trade_days=unable_to_trade_days)
     # metrics.get_new_matrices(points)
     # metrics.to_csv(os.path.join(os.getcwd(), "metrices.csv"))
 
 
 if __name__ == "__main__":
-    run_combined_premium("2019-01-01", "2019-01-31")
+    run_combined_premium("2018-01-01", "2022-12-31")
     # total_unable_to_trade_days = 0
     # points_list = []
     # import time

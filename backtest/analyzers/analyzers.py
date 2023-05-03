@@ -12,7 +12,6 @@ class Analyzers:
         self.capital = capital
         self.position_size, self.margin_required = get_position_size_and_margin(capital, instrument)
 
-
     def get_new_matrices(self, daily_points_series: pd.Series, strat='', unable_to_trade_days: int = 0):
         df = pd.DataFrame(daily_points_series, columns=['points'])
         df = df.reset_index()
@@ -33,12 +32,6 @@ class Analyzers:
         # Calculate total points
         total_points = np.sum(df['points'])
 
-        # Calculate win points
-        win_points = np.sum(df[df['points'] > 0]['points'])
-
-        # Calculate loss points
-        loss_points = np.sum(df[df['points'] < 0]['points'])
-
         # Calculate max win
         max_win = np.max(df['points'])
 
@@ -47,7 +40,12 @@ class Analyzers:
 
         # Calculate max drawdown
         cumulative_points = np.cumsum(df['points'])
-        max_drawdown = np.max(np.maximum.accumulate(cumulative_points) - cumulative_points)
+        max_cumulative_points = np.maximum.accumulate(cumulative_points)
+        max_drawdown = np.max(max_cumulative_points - cumulative_points)
+
+        # Calculate max drawdown percentage
+
+        max_drawdown_percentage = np.max((max_cumulative_points - cumulative_points) / max_cumulative_points) * 100
 
         # Calculate calmar
         calmar = (total_points / max_drawdown) if max_drawdown > 0 else 0
@@ -74,33 +72,38 @@ class Analyzers:
 
         # Calculate sortino ratio
         down_dev = np.where(df['points'] < 0, df['points'], 0).std()
-        sortino = (np.sqrt(252) * points_mean)/ down_dev
-        # print(df)
+        sortino = (np.sqrt(252) * points_mean) / down_dev
 
         # Calculate average monthly ROI
         monthly_returns = df['points'].resample('M').sum()
         average_monthly_roi = np.mean(monthly_returns / total_points) * 100
-
-        # Print the results
-        print("Total Trades:", round(total_trades, 2))
-        print("Total Wins:",  round(total_wins, 2))
-        print("Total Losses:",  round(total_losses, 2))
-        print("Total Points:",  round(total_points, 2))
-        print("Win Points:",  round(win_points, 2))
-        print("Loss Points:",  round(loss_points, 2))
-        print("Max Win:",  round(max_win, 2))
-        print("Max Loss:",  round(max_loss, 2))
-        print("Max Win Day:", max_win_day.date())
-        print("Max Loss Day:", max_loss_day.date())
-        print("Max Drawdown:",  round(max_drawdown, 2))
-        print("Calmar:",  round(calmar, 2))
-        print("Win Rate (%):",  round(win_rate, 2))
-        print("Avg Points on Winning Days:",  round(avg_points_on_winning_days, 2))
-        print("Avg Loss on Losing Days:",  round(avg_loss_on_losing_days, 2))
-        print("Sharpe Ratio:",  round(sharpe, 2))
-        print("Sortino Ratio:",  round(sortino, 2))
-        print("Average Monthly ROI (%):", average_monthly_roi)
-
+        metrics = pd.DataFrame(columns=['Strategy', 'Total Capital', 'Margin Used', 'Total Trading days',
+                                        'Win days', 'Loss Days', 'Win Rate (%)', 'Average Monthly ROI (%)',
+                                        'Total Profit (Rs)', 'Max Profit (Rs)', 'Max Loss (Rs)', 'Max Winning Day',
+                                        'Max Losing Day', 'Max Drawdown (Rs)', 'Max Drawdown (%)', 'Calmar',
+                                        'Sharpe Ratio', 'Sortino Ratio', 'Unable to trade days']
+                               )
+        metrics = pd.concat([metrics, pd.DataFrame({'Strategy': strat,
+                                                    'Total Capital': self.capital,
+                                                    'Margin Used': self.margin_required,
+                                                    'Total Trading days': total_trades,
+                                                    'Win days': total_wins,
+                                                    'Loss Days': total_losses,
+                                                    'Win Rate (%)': round(win_rate, 2),
+                                                    'Average Monthly ROI (%)': average_monthly_roi,
+                                                    'Total Profit (Rs)': round(total_points * self.position_size, 2),
+                                                    'Max Profit (Rs)': round(max_win * self.position_size, 2),
+                                                    'Max Loss (Rs)': round(max_loss * self.position_size, 2),
+                                                    'Max Winning Day': max_win_day.date(),
+                                                    'Max Losing Day': max_loss_day.date(),
+                                                    'Max Drawdown (Rs)': round(max_drawdown * self.position_size, 2),
+                                                    'Max Drawdown (%)': round(max_drawdown_percentage, 2),
+                                                    'Calmar': round(calmar, 2),
+                                                    'Sharpe Ratio': round(sharpe, 2),
+                                                    'Sortino Ratio': round(sortino, 2),
+                                                    'Unable to trade days': unable_to_trade_days}, index=[0])],
+                            ignore_index=True)
+        return metrics.T
 
     def get_metrics(self, daily_points_series: pd.Series, strat='', unable_to_trade_days: int = 0):
         df = pd.DataFrame(daily_points_series, columns=['points'])
@@ -138,6 +141,7 @@ class Analyzers:
         max_dd = dd.min()
         calmar = round(-tot_pts / max_dd, 2)
         #     dd_pct = dd/df2['Entry_Price']
+        win_pts = np.where(ret > 0, ret, 0).sum()
         OA_adj_pts = (win_pts - max_win)
 
         win_rate = round(tot_wins / tot_trades, 3)

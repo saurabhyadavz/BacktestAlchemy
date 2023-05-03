@@ -13,8 +13,8 @@ BANKNIFTY_SYMBOL = "BANKNIFTY"
 NIFTY_SYMBOL = "NIFTY"
 BANKNIFTY_LOT_SIZE = 25
 NIFTY_LOT_SIZE = 50
-BANKNIFTY_MARGIN_REQUIRED = 1800000
-NIFTY_MARGIN_REQUIRED = 1300000
+BANKNIFTY_MARGIN_REQUIRED = 180000
+NIFTY_MARGIN_REQUIRED = 130000
 
 
 def string_to_datetime(date_string: str) -> datetime:
@@ -268,8 +268,10 @@ def get_position_size_and_margin(capital: int, instrument: str) -> tuple[int, in
         tuple[int, int]: returns tuple of position size and margin required
     """
     if instrument == "BANKNIFTY":
-        position_size = (capital // BANKNIFTY_MARGIN_REQUIRED) * BANKNIFTY_LOT_SIZE
-        return position_size, position_size * BANKNIFTY_MARGIN_REQUIRED
+        lot_size = (capital // BANKNIFTY_MARGIN_REQUIRED)
+        position_size = lot_size * BANKNIFTY_LOT_SIZE
+        return position_size, lot_size * BANKNIFTY_MARGIN_REQUIRED
 
-    position_size = (capital // NIFTY_MARGIN_REQUIRED) * NIFTY_LOT_SIZE
-    return position_size, position_size * NIFTY_MARGIN_REQUIRED
+    lot_size = (capital // NIFTY_MARGIN_REQUIRED)
+    position_size = lot_size * NIFTY_LOT_SIZE
+    return position_size, lot_size * NIFTY_MARGIN_REQUIRED
