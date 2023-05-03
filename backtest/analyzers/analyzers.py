@@ -4,19 +4,29 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import calendar
 import os
-from backtest.utils.utils import get_position_size_and_margin
+from backtest.utils.utils import get_instrument_lot_size, calculate_leverage, NOTIONAL_VALUE_ASSUMED
 
 
 class Analyzers:
-    def __init__(self, capital: int, instrument: str):
+    def __init__(self, capital: int, lots: int, instrument: str, start_date: str, end_date: str, strat_name: str = ''):
         self.capital = capital
-        self.position_size, self.margin_required = get_position_size_and_margin(capital, instrument)
+        self.lots = lots
+        self.instrument = instrument
+        self.strat_name = strat_name
+        self.start_date = start_date
+        self.end_date = end_date
+        self.position_size = get_instrument_lot_size(instrument) * lots
+        self.leverage = calculate_leverage(capital, lots)
 
-    def get_new_matrices(self, daily_points_series: pd.Series, strat='', unable_to_trade_days: int = 0):
+    def get_matrices(self, daily_points_series: pd.Series, unable_to_trade_days: int = 0):
         df = pd.DataFrame(daily_points_series, columns=['points'])
         df = df.reset_index()
         df.columns = ['date', 'points']
         df["date"] = pd.to_datetime(df["date"])
+        df["points"] = df["points"]
+        df["points_1"] = df["points"] * self.position_size
+        df.at[0, "points_1"] = self.capital + df.at[0, "points_1"]
+        df.to_csv("check.csv")
         df.set_index("date", inplace=True)
         df = df.dropna()
 
@@ -39,25 +49,36 @@ class Analyzers:
         max_loss = np.min(df['points'])
 
         # Calculate max drawdown
-        cumulative_points = np.cumsum(df['points'])
+        cumulative_points = np.cumsum(df['points_1'])
         max_cumulative_points = np.maximum.accumulate(cumulative_points)
-        max_drawdown = np.max(max_cumulative_points - cumulative_points)
+        drawdown = max_cumulative_points - cumulative_points
+        max_drawdown = np.max(drawdown)
+        max_drawdown_days = len(drawdown[drawdown == max_drawdown])
+        max_drawdown_days_idx = np.where(drawdown == max_drawdown)[0]
+        max_drawdown_start_day = (df.iloc[max_drawdown_days_idx[0]].name).date()
+        max_drawdown_end_day = (df.iloc[max_drawdown_days_idx[-1]].name).date()
 
         # Calculate max drawdown percentage
 
-        max_drawdown_percentage = np.max((max_cumulative_points - cumulative_points) / max_cumulative_points) * 100
+        max_drawdown_percentage = np.max(drawdown / max_cumulative_points) * 100
 
         # Calculate calmar
-        calmar = (total_points / max_drawdown) if max_drawdown > 0 else 0
+        calmar = (total_points * self.position_size / max_drawdown) if max_drawdown > 0 else 0
 
         # Calculate win rate
-        win_rate = (total_wins / total_trades) * 100
+        win_rate = (total_wins / total_trades)
 
-        # Calculate average points on winning days
+        # Calculate RR, avg win points, avg loss points, profit factor
+        win_pts = np.sum(df[df['points'] > 0]['points'])
+        loss_pts = np.sum(df[df['points'] < 0]['points'])
+        OA_adj_pts = (win_pts - max_win)
         avg_points_on_winning_days = np.mean(df[df['points'] > 0]['points'])
-
-        # Calculate average loss on losing days
         avg_loss_on_losing_days = np.mean(df[df['points'] < 0]['points'])
+        avg_points_winning_days_oa_adj = round(OA_adj_pts / total_wins, 1)
+        risk_to_reward = round(abs(avg_points_on_winning_days / avg_loss_on_losing_days), 2)
+        profit_factor = round(abs(win_pts / loss_pts), 2)
+        outlier_adjusted_profit_factor = round(abs(OA_adj_pts / loss_pts), 2)
+        expectancy = (win_rate * risk_to_reward) - (1 - win_rate)
 
         points_mean = np.mean(df['points'])
 
@@ -77,115 +98,56 @@ class Analyzers:
         # Calculate average monthly ROI
         monthly_returns = df['points'].resample('M').sum()
         average_monthly_roi = np.mean(monthly_returns / total_points) * 100
-        metrics = pd.DataFrame(columns=['Strategy', 'Total Capital', 'Margin Used', 'Total Trading days',
-                                        'Win days', 'Loss Days', 'Win Rate (%)', 'Average Monthly ROI (%)',
-                                        'Total Profit (Rs)', 'Max Profit (Rs)', 'Max Loss (Rs)', 'Max Winning Day',
-                                        'Max Losing Day', 'Max Drawdown (Rs)', 'Max Drawdown (%)', 'Calmar',
-                                        'Sharpe Ratio', 'Sortino Ratio', 'Unable to trade days']
-                               )
-        metrics = pd.concat([metrics, pd.DataFrame({'Strategy': strat,
-                                                    'Total Capital': self.capital,
-                                                    'Margin Used': self.margin_required,
-                                                    'Total Trading days': total_trades,
-                                                    'Win days': total_wins,
-                                                    'Loss Days': total_losses,
-                                                    'Win Rate (%)': round(win_rate, 2),
-                                                    'Average Monthly ROI (%)': average_monthly_roi,
-                                                    'Total Profit (Rs)': round(total_points * self.position_size, 2),
-                                                    'Max Profit (Rs)': round(max_win * self.position_size, 2),
-                                                    'Max Loss (Rs)': round(max_loss * self.position_size, 2),
-                                                    'Max Winning Day': max_win_day.date(),
-                                                    'Max Losing Day': max_loss_day.date(),
-                                                    'Max Drawdown (Rs)': round(max_drawdown * self.position_size, 2),
-                                                    'Max Drawdown (%)': round(max_drawdown_percentage, 2),
-                                                    'Calmar': round(calmar, 2),
-                                                    'Sharpe Ratio': round(sharpe, 2),
-                                                    'Sortino Ratio': round(sortino, 2),
-                                                    'Unable to trade days': unable_to_trade_days}, index=[0])],
-                            ignore_index=True)
-        return metrics.T
-
-    def get_metrics(self, daily_points_series: pd.Series, strat='', unable_to_trade_days: int = 0):
-        df = pd.DataFrame(daily_points_series, columns=['points'])
-        df = df.reset_index()
-        df.columns = ['Date', 'points']
-        print(df)
-        df = df.dropna()
-
-        ret = df.values
-        col = df.name
-
-        if strat == '':
-            col = col
-        else:
-            col = strat
-
-        tot_trades = len(ret)
-        tot_wins = np.sum(ret > 0)
-        tot_losses = np.sum(ret < 0)
-
-        tot_pts = ret.sum()
-        win_pts = np.where(ret > 0, ret, 0).sum()
-        loss_pts = np.where(ret < 0, ret, 0).sum()
-
-        max_win = ret.max()
-        max_loss = ret.min()
-
-        sigma = ret.std()
-        mu = ret.mean()
-        down_dev = np.where(ret < 0, ret, 0).std()
-
-        cum_pts = ret.cumsum()
-        cum_max = np.maximum.accumulate(cum_pts)
-        dd = cum_pts - cum_max
-        max_dd = dd.min()
-        calmar = round(-tot_pts / max_dd, 2)
-        #     dd_pct = dd/df2['Entry_Price']
-        win_pts = np.where(ret > 0, ret, 0).sum()
-        OA_adj_pts = (win_pts - max_win)
-
-        win_rate = round(tot_wins / tot_trades, 3)
-        avg_win = round(OA_adj_pts / tot_wins, 1)
-        avg_loss = round(loss_pts / tot_losses, 1)
-        avg_pts = (tot_pts - max_win) / tot_trades
-        RR = round(abs(avg_win / avg_loss), 2)
-        PF = round(abs(win_pts / loss_pts), 2)
-        OAPF = round(abs(OA_adj_pts / loss_pts), 2)
-
-        exp = round(win_rate * RR - (1 - win_rate), 2)
-        exp_pts = win_rate * avg_win + (1 - win_rate) * avg_loss
-        kelly = round(win_rate - ((1 - win_rate) / RR), 3)
-
-        sharpe = round(np.sqrt(252) * mu / sigma, 2)
-        sortino = round(np.sqrt(252) * mu / down_dev, 2)
-
-        metrics = pd.DataFrame(columns=['Strategy', 'Total Trades', 'Total Points', 'Wins', 'Losses', 'Win Rate', 'RR',
-                                        'PF', 'OAPF', 'Pts per Trade', 'Exp_in_R', 'Kelly', 'Max DD', 'CALMAR',
-                                        'Sharpe', 'Sortino', 'Max Win', 'Max Loss', 'Avg Win', 'Avg Loss',
+        metrics = pd.DataFrame(columns=['Test Start Date', 'Test End Date', 'Instrument',
+                                        'Strategy', 'Total Capital', 'Notional Value Asm.', 'Leverage',
+                                        'Traded with Lots', 'Total Trading days', 'Win days', 'Loss Days',
+                                        'Win Rate (%)', 'Avg Profit on Profit Days Outlier Adjusted (Rs)',
+                                        'Avg Profit on Profit Days (Rs)', 'Avg Loss on Loss Days (Rs)',
+                                        'Average Monthly ROI (%)', 'Total Profit (Rs)', 'Max Profit (Rs)',
+                                        'Max Loss (Rs)', 'Max Winning Day', 'Max Losing Day', 'Max Drawdown (Rs)',
+                                        'Max Drawdown (%)', 'Max Drawdown Days', 'Risk to reward', 'Profit Factor',
+                                        'Outlier Adjusted Profit Factor', 'Expectancy',
+                                        'Calmar', 'Sharpe Ratio (Annualised)', 'Sortino Ratio (Annualised)',
                                         'Unable to trade days'])
-        metrics = pd.concat([metrics, pd.DataFrame({'Strategy': col,
-                                                    'Total Trades': tot_trades,
-                                                    'Total Points': tot_pts * self.lot_size,
-                                                    'Wins': tot_wins,
-                                                    'Losses': tot_losses,
-                                                    'Win Rate': win_rate,
-                                                    'Pts per Trade': avg_pts * self.lot_size,
-                                                    'RR': RR,
-                                                    'PF': PF,
-                                                    'OAPF': OAPF,
-                                                    'Exp_in_R': exp,
-                                                    'Kelly': kelly,
-                                                    'CALMAR': calmar,
-                                                    'Max DD': max_dd,
-                                                    'Sharpe': sharpe,
-                                                    'Sortino': sortino,
-                                                    'Max Win': max_win,
-                                                    'Max Loss': max_loss,
-                                                    'Avg Win': avg_win,
-                                                    'Avg Loss': avg_loss,
-                                                    'Unable to trade days': unable_to_trade_days}, index=[0])],
-                            ignore_index=True)
-        return metrics.T
+        metrics = pd.concat([metrics, pd.DataFrame({
+            'Test Start Date': self.start_date,
+            'Test End Date': self.end_date,
+            'Instrument': self.instrument,
+            'Strategy': self.strat_name,
+            'Total Capital': self.capital,
+            'Notional Value Asm.': NOTIONAL_VALUE_ASSUMED,
+            'Leverage': f"{self.leverage}x",
+            'Traded with Lots': self.lots,
+            'Total Trading days': total_trades,
+            'Win days': total_wins,
+            'Loss Days': total_losses,
+            'Win Rate (%)': round(win_rate * 100, 2),
+            'Avg Profit on Profit Days Outlier Adjusted (Rs)': round(
+                avg_points_winning_days_oa_adj * self.position_size, 2),
+            'Avg Profit on Profit Days (Rs)': round(
+                avg_points_on_winning_days * self.position_size, 2),
+            'Avg Loss on Loss Days (Rs)': round(
+                avg_loss_on_losing_days * self.position_size, 2),
+            'Average Monthly ROI (%)': round(average_monthly_roi, 2),
+            'Total Profit (Rs)': round(total_points * self.position_size, 2),
+            'Max Profit (Rs)': round(max_win * self.position_size, 2),
+            'Max Loss (Rs)': round(max_loss * self.position_size, 2),
+            'Max Winning Day': max_win_day.date(),
+            'Max Losing Day': max_loss_day.date(),
+            'Max Drawdown (Rs)': round(max_drawdown * self.position_size, 2),
+            'Max Drawdown (%)': round(max_drawdown_percentage, 2),
+            'Max Drawdown Days': f"{max_drawdown_days}[{max_drawdown_start_day} to {max_drawdown_end_day}]",
+            'Risk to reward': risk_to_reward,
+            'Profit Factor': profit_factor,
+            'Outlier Adjusted Profit Factor': outlier_adjusted_profit_factor,
+            'Expectancy': round(expectancy, 2),
+            'Calmar': round(calmar, 2),
+            'Sharpe Ratio (Annualised)': round(sharpe, 2),
+            'Sortino Ratio (Annualised)': round(sortino, 2),
+            'Unable to trade days': unable_to_trade_days}, index=[0])], ignore_index=True)
+        metrics.reset_index(drop=True, inplace=True)
+        metrics = metrics.set_index('Test Start Date').T
+        return metrics
 
 
 class DegenPlotter:

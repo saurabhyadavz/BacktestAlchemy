@@ -15,6 +15,7 @@ BANKNIFTY_LOT_SIZE = 25
 NIFTY_LOT_SIZE = 50
 BANKNIFTY_MARGIN_REQUIRED = 180000
 NIFTY_MARGIN_REQUIRED = 130000
+NOTIONAL_VALUE_ASSUMED = 1000000
 
 
 def string_to_datetime(date_string: str) -> datetime:
@@ -257,21 +258,31 @@ def get_combined_premium_df_from_trading_symbols(df: pd.DataFrame, trading_symbo
         return is_symbol_missing, df
 
 
-def get_position_size_and_margin(capital: int, instrument: str) -> tuple[int, int]:
+def get_instrument_lot_size(instrument: str) -> int:
     """
-    Calculates position size and margin required on given capital
+    Returns instrument lot size
     Args:
-        capital(int): capital
         instrument(str): instrument name(BANKNIFTY/NIFTY)
 
     Returns:
-        tuple[int, int]: returns tuple of position size and margin required
+        int: returns instrument lot size
     """
     if instrument == "BANKNIFTY":
-        lot_size = (capital // BANKNIFTY_MARGIN_REQUIRED)
-        position_size = lot_size * BANKNIFTY_LOT_SIZE
-        return position_size, lot_size * BANKNIFTY_MARGIN_REQUIRED
+        return BANKNIFTY_LOT_SIZE
+    return NIFTY_LOT_SIZE
 
-    lot_size = (capital // NIFTY_MARGIN_REQUIRED)
-    position_size = lot_size * NIFTY_LOT_SIZE
-    return position_size, lot_size * NIFTY_MARGIN_REQUIRED
+
+def calculate_leverage(capital: int, lots: int) -> int:
+    """
+    Calculates leverage for given capital and lots
+    Args:
+        capital(int): trading capital
+        lots(int): trading lots
+
+    Returns:
+        int: returns leverage
+    """
+    lakhs_per_lot = capital / lots
+    leverage = int(NOTIONAL_VALUE_ASSUMED / lakhs_per_lot)
+    return leverage
+

@@ -1,0 +1,32 @@
+Test Start Date,2019-01-01
+Test End Date,2019-12-31
+Instrument,BANKNIFTY
+Strategy,Combined Premium VWAP
+Total Capital,1000000
+Notional Value Asm.,1000000
+Leverage,3x
+Traded with Lots,3
+Total Trading days,244
+Win days,108
+Loss Days,135
+Win Rate (%),44.26
+Avg Profit on Profit Days Outlier Adjusted (Rs),13185.0
+Avg Profit on Profit Days (Rs),13969.4
+Avg Loss on Loss Days (Rs),-13554.23
+Average Monthly ROI (%),8.33
+Total Profit (Rs),-321126.68
+Max Profit (Rs),84594.49
+Max Loss (Rs),-42843.49
+Max Winning Day,2019-10-03
+Max Losing Day,2019-10-11
+Max Drawdown (Rs),35513100.0
+Max Drawdown (%),46.13
+Max Drawdown Days,1[2019-10-11 to 2019-10-11]
+Risk to reward,1.03
+Profit Factor,0.82
+Outlier Adjusted Profit Factor,0.78
+Expectancy,-0.1
+Calmar,-0.68
+Sharpe Ratio (Annualised),-1.15
+Sortino Ratio (Annualised),-1.92
+Unable to trade days,0
