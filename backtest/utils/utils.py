@@ -16,6 +16,8 @@ NIFTY_LOT_SIZE = 50
 BANKNIFTY_MARGIN_REQUIRED = 180000
 NIFTY_MARGIN_REQUIRED = 130000
 NOTIONAL_VALUE_ASSUMED = 1000000
+BUY = "BUY"
+SELL = "SELL"
 
 
 def string_to_datetime(date_string: str) -> datetime:
@@ -286,3 +288,21 @@ def calculate_leverage(capital: int, lots: int) -> int:
     leverage = int(NOTIONAL_VALUE_ASSUMED / lakhs_per_lot)
     return leverage
 
+
+def save_tradebook(tradebook_dict: dict[str, typing.Any], strat_name: str):
+    """
+    Saves Tradebook dictionary as a CSV file
+    Args:
+        tradebook_dict(dict[str, typing.Any]): tradebook dictionary
+        strat_name(str): strategy name
+
+    Returns:
+
+    """
+    tradebook_df = pd.DataFrame(tradebook_dict)
+    curr_dir = os.path.dirname(os.path.dirname(__file__))
+    strategy_dir = os.path.join(curr_dir, strat_name)
+    if not os.path.exists(strategy_dir):
+        os.mkdir(strategy_dir)
+    tradebook_file_path = os.path.join(strategy_dir, f"{strat_name}_tradebook.csv")
+    tradebook_df.to_csv(tradebook_file_path, index=False)

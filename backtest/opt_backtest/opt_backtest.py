@@ -8,6 +8,9 @@ from backtest.utils import utils
 import pandas_ta as ta
 from datetime import datetime, date
 
+from backtest.utils.utils import save_tradebook
+
+
 class OptBacktest:
     def __init__(self, strategy: Strategy, data: DataProducer):
         self.strategy = strategy
@@ -216,9 +219,8 @@ class OptBacktest:
     def backtest_combined_premium_vwap(self):
         df = self.data.resampled_historical_df
         df["day"] = df["date"].dt.date
-        df["Points"] = 0
-        track_pnl = pd.Series(np.nan, index=df['date'].dt.date.unique())
-        track_trades = pd.Series(np.nan, index=df['date'].dt.date.unique())
+        tradebook = {'datetime': [], 'price': [], 'side': [], "is_intraday": self.strategy.is_intraday,
+                     "unable_to_trade_days": 0}
         day_groups = df.groupby("day")
         unable_to_trade_days = 0
         for day, day_df in day_groups:
@@ -248,17 +250,17 @@ class OptBacktest:
                                      volume=day_df["combined_premium_volume"])
             day_df = day_df.reset_index()
             is_position = False
-            running_pnl = 0
+            running_pnl_points = 0
             total_trades = 0
             for idx, row in day_df.iterrows():
                 curr_time = day_df.loc[idx, "date"].time()
                 if curr_time >= self.strategy.end_time:
                     self.backtest_logger.logger.info(f"Exit: End of trade {curr_time}")
                     if is_position:
-                        buy_price = day_df.loc[idx, "combined_premium_close"]
-                        buy_price = buy_price * (1 + self.strategy.slippage)
-                        running_pnl += buy_price * 1
-                        self.backtest_logger.logger.info(f"Current PNL {-1 * running_pnl}")
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(day_df.loc[idx, "combined_premium_close"])
+                        tradebook["side"].append(1)
+                        self.backtest_logger.logger.info(f"Current PNL {-1 * running_pnl_points}")
                         total_trades += 1
                     break
                 if curr_time >= self.strategy.start_time and not is_position:
@@ -268,9 +270,9 @@ class OptBacktest:
                             f"Entry {curr_time}: combined close: {day_df.loc[idx, 'combined_premium_close']}, vwap: {vwap_kya_tha}"
                         )
                         short_price = day_df.loc[idx, "combined_premium_close"]
-                        short_price = short_price * (1 - self.strategy.slippage)
-                        running_pnl += short_price * -1
-                        total_trades += 1
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(short_price)
+                        tradebook["side"].append(-1)
                         is_position = True
 
                 if is_position:
@@ -280,23 +282,33 @@ class OptBacktest:
                             f"Exit {curr_time}: combined close: {day_df.loc[idx, 'combined_premium_close']},"
                             f" vwap: {vwap_kya_tha}")
                         buy_price = day_df.loc[idx, "combined_premium_close"]
-                        buy_price = buy_price * (1 + self.strategy.slippage)
-                        running_pnl += buy_price * 1
-                        self.backtest_logger.logger.info(f"Current PNL {-1 * running_pnl}")
-                        total_trades += 1
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(buy_price)
+                        tradebook["side"].append(1)
+                        self.backtest_logger.logger.info(f"Current PNL {-1 * running_pnl_points}")
                         is_position = False
 
-                    curr_close_price = day_df.loc[idx, "combined_premium_close"]
-                    curr_pnl = (curr_close_price * 1 + running_pnl) * -1
-                    if is_position and (curr_pnl <= self.strategy.stop_loss):
-                        self.backtest_logger.logger.info(f"SL HIT: SL={self.strategy.stop_loss} PNL: {curr_pnl}")
-                        curr_close_price = curr_close_price * (1 + self.strategy.slippage)
-                        running_pnl += curr_close_price * 1
-                        self.backtest_logger.logger.info(f"Current PNL {-1 * running_pnl}")
-                        total_trades += 1
-                        break
-
-            track_pnl.loc[day] = -1 * running_pnl
-            track_trades.loc[day] = int(total_trades)
-        track_pnl.dropna(inplace=True)
-        return unable_to_trade_days, track_pnl, track_trades
+                    if is_position:
+                        # Check MTM in points stoploss
+                        curr_close_price = day_df.loc[idx, "combined_premium_close"]
+                        curr_pnl_points = (curr_close_price * 1 + running_pnl_points) * -1
+                        if self.strategy.stoploss_mtm_points:
+                            if curr_pnl_points <= self.strategy.stoploss_mtm_points:
+                                tradebook["datetime"].append(day_df.loc[idx, "date"])
+                                tradebook["price"].append(curr_close_price)
+                                tradebook["side"].append(1)
+                                self.backtest_logger.logger.info(f"MTM POINT SL HIT: SL={self.strategy.stoploss_mtm_points}:"
+                                                                 f"Current PNL: {curr_pnl_points}")
+                                break
+                        # Check MTM in rupees stoploss
+                        if self.strategy.stoploss_mtm_rupees:
+                            curr_pnl_rupees = curr_pnl_points * self.strategy.position_size
+                            if curr_pnl_rupees <= self.strategy.stoploss_mtm_rupees:
+                                self.backtest_logger.logger.info(f"MTM RUPEES SL HIT: SL={self.strategy.stoploss_mtm_rupees}:"
+                                                                 f"Current PNL: {curr_pnl_rupees}")
+                                tradebook["datetime"].append(day_df.loc[idx, "date"])
+                                tradebook["price"].append(curr_close_price)
+                                tradebook["side"].append(1)
+                                break
+        tradebook["unable_to_trade_days"] = unable_to_trade_days
+        save_tradebook(tradebook, self.strategy.strat_name)

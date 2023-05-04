@@ -4,11 +4,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import calendar
 import os
+from backtest.strategy.strategy import Strategy
 from backtest.utils.utils import get_instrument_lot_size, calculate_leverage, NOTIONAL_VALUE_ASSUMED
 
 
 class Analyzers:
-    def __init__(self, capital: int, lots: int, instrument: str, start_date: str, end_date: str, strat_name: str = ''):
+    def __init__(self, capital: int, lots: int, instrument: str, start_date: str, end_date: str,
+                 strat_name: str, slippage: float = 0):
         self.capital = capital
         self.lots = lots
         self.instrument = instrument
@@ -17,46 +19,64 @@ class Analyzers:
         self.end_date = end_date
         self.position_size = get_instrument_lot_size(instrument) * lots
         self.leverage = calculate_leverage(capital, lots)
+        self.slippage = slippage
+        self.strat_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), strat_name)
+        self.metrics_path = os.path.join(self.strat_dir, "metrics.csv")
+        self.tradebook_path = os.path.join(self.strat_dir, f"{self.strat_name}_tradebook.csv")
+        self.tradebook_df = pd.read_csv(self.tradebook_path)
 
-    def get_matrices(self, daily_points_series: pd.Series, unable_to_trade_days: int = 0):
-        df = pd.DataFrame(daily_points_series, columns=['points'])
-        df = df.reset_index()
-        df.columns = ['date', 'points']
-        df["date"] = pd.to_datetime(df["date"])
-        df["points"] = df["points"]
-        df["points_1"] = df["points"] * self.position_size
-        df.at[0, "points_1"] = self.capital + df.at[0, "points_1"]
-        df.to_csv("check.csv")
-        df.set_index("date", inplace=True)
-        df = df.dropna()
+    def calculate_metrices(self):
+        """Calculates Metrices from tradebook"""
+
+        tradebook_df = self.tradebook_df.copy()
+        tradebook_df["datetime"] = pd.to_datetime(tradebook_df["datetime"])
+        tradebook_df["date"] = tradebook_df["datetime"].dt.date
+        tradebook_df["price_with_slippage"] = np.where(
+            tradebook_df["side"] == 1, tradebook_df["price"] * tradebook_df["side"] * (1 + self.slippage),
+            tradebook_df["price"] * tradebook_df["side"] * (1 - self.slippage)
+        )
+        unable_to_trade_days = tradebook_df.iloc[0]["unable_to_trade_days"]
+        tradebook_df.drop(["unable_to_trade_days", "is_intraday"], inplace=True, axis=1)
+        tradebook_grp = tradebook_df.groupby("date")
+        day_points_df = pd.DataFrame(columns=["date", "points", "total trade"])
+        for date, grp in tradebook_grp:
+            points = grp["price_with_slippage"].sum() * -1
+            total_trades = grp.shape[0]
+            day_points_df = pd.concat([day_points_df, pd.DataFrame({"date": [date], "points": [points],
+                                                                    "total trade": total_trades})], ignore_index=True)
+        day_points_df["date"] = pd.to_datetime(day_points_df["date"])
+        day_points_df["pnl"] = day_points_df["points"] * self.position_size
+        day_points_df.at[0, "pnl"] = self.capital + day_points_df.at[0, "pnl"]
+        day_points_df.set_index("date", inplace=True)
+        day_points_df = day_points_df.dropna()
 
         # Calculate total trades
-        total_trades = len(df)
+        total_trades = len(day_points_df)
 
         # Calculate total wins
-        total_wins = len(df[df['points'] > 0])
+        total_wins = len(day_points_df[day_points_df['points'] > 0])
 
         # Calculate total losses
-        total_losses = len(df[df['points'] < 0])
+        total_losses = len(day_points_df[day_points_df['points'] < 0])
 
         # Calculate total points
-        total_points = np.sum(df['points'])
+        total_points = np.sum(day_points_df['points'])
 
         # Calculate max win
-        max_win = np.max(df['points'])
+        max_win = np.max(day_points_df['points'])
 
         # Calculate max loss
-        max_loss = np.min(df['points'])
+        max_loss = np.min(day_points_df['points'])
 
         # Calculate max drawdown
-        cumulative_points = np.cumsum(df['points_1'])
+        cumulative_points = np.cumsum(day_points_df['pnl'])
         max_cumulative_points = np.maximum.accumulate(cumulative_points)
         drawdown = max_cumulative_points - cumulative_points
         max_drawdown = np.max(drawdown)
         max_drawdown_days = len(drawdown[drawdown == max_drawdown])
         max_drawdown_days_idx = np.where(drawdown == max_drawdown)[0]
-        max_drawdown_start_day = (df.iloc[max_drawdown_days_idx[0]].name).date()
-        max_drawdown_end_day = (df.iloc[max_drawdown_days_idx[-1]].name).date()
+        max_drawdown_start_day = day_points_df.iloc[max_drawdown_days_idx[0]].name.date()
+        max_drawdown_end_day = day_points_df.iloc[max_drawdown_days_idx[-1]].name.date()
 
         # Calculate max drawdown percentage
 
@@ -69,34 +89,34 @@ class Analyzers:
         win_rate = (total_wins / total_trades)
 
         # Calculate RR, avg win points, avg loss points, profit factor
-        win_pts = np.sum(df[df['points'] > 0]['points'])
-        loss_pts = np.sum(df[df['points'] < 0]['points'])
+        win_pts = np.sum(day_points_df[day_points_df['points'] > 0]['points'])
+        loss_pts = np.sum(day_points_df[day_points_df['points'] < 0]['points'])
         OA_adj_pts = (win_pts - max_win)
-        avg_points_on_winning_days = np.mean(df[df['points'] > 0]['points'])
-        avg_loss_on_losing_days = np.mean(df[df['points'] < 0]['points'])
+        avg_points_on_winning_days = np.mean(day_points_df[day_points_df['points'] > 0]['points'])
+        avg_loss_on_losing_days = np.mean(day_points_df[day_points_df['points'] < 0]['points'])
         avg_points_winning_days_oa_adj = round(OA_adj_pts / total_wins, 1)
         risk_to_reward = round(abs(avg_points_on_winning_days / avg_loss_on_losing_days), 2)
         profit_factor = round(abs(win_pts / loss_pts), 2)
         outlier_adjusted_profit_factor = round(abs(OA_adj_pts / loss_pts), 2)
         expectancy = (win_rate * risk_to_reward) - (1 - win_rate)
 
-        points_mean = np.mean(df['points'])
+        points_mean = np.mean(day_points_df['points'])
 
         # Calculate max loss day
-        max_loss_day = df[df['points'] == max_loss].index[0]
+        max_loss_day = day_points_df[day_points_df['points'] == max_loss].index[0]
 
         # Calculate max win day
-        max_win_day = df[df['points'] == max_win].index[0]
+        max_win_day = day_points_df[day_points_df['points'] == max_win].index[0]
 
         # Calculate sharpe ratio
-        sharpe = (np.sqrt(252) * points_mean) / np.std(df['points'])
+        sharpe = (np.sqrt(252) * points_mean) / np.std(day_points_df['points'])
 
         # Calculate sortino ratio
-        down_dev = np.where(df['points'] < 0, df['points'], 0).std()
+        down_dev = np.where(day_points_df['points'] < 0, day_points_df['points'], 0).std()
         sortino = (np.sqrt(252) * points_mean) / down_dev
 
         # Calculate average monthly ROI
-        monthly_returns = df['points'].resample('M').sum()
+        monthly_returns = day_points_df['points'].resample('M').sum()
         average_monthly_roi = np.mean(monthly_returns / total_points) * 100
         metrics = pd.DataFrame(columns=['Test Start Date', 'Test End Date', 'Instrument',
                                         'Strategy', 'Total Capital', 'Notional Value Asm.', 'Leverage',
@@ -134,7 +154,7 @@ class Analyzers:
             'Max Loss (Rs)': round(max_loss * self.position_size, 2),
             'Max Winning Day': max_win_day.date(),
             'Max Losing Day': max_loss_day.date(),
-            'Max Drawdown (Rs)': round(max_drawdown * self.position_size, 2),
+            'Max Drawdown (Rs)': round(max_drawdown, 2),
             'Max Drawdown (%)': round(max_drawdown_percentage, 2),
             'Max Drawdown Days': f"{max_drawdown_days}[{max_drawdown_start_day} to {max_drawdown_end_day}]",
             'Risk to reward': risk_to_reward,
@@ -147,11 +167,10 @@ class Analyzers:
             'Unable to trade days': unable_to_trade_days}, index=[0])], ignore_index=True)
         metrics.reset_index(drop=True, inplace=True)
         metrics = metrics.set_index('Test Start Date').T
-        return metrics
+        metrics.to_csv(self.metrics_path, index_label='Test Start Date')
 
 
 class DegenPlotter:
-
     def __init__(self, day_points: pd.Series, lot_size: int, strat_name: str = ""):
         self.curve_plot_path = os.path.join(os.getcwd(), f"{strat_name}_curve.png")
         self.monthly_report_plot_path = os.path.join(os.getcwd(), f"{strat_name}_monthly_report.png")
