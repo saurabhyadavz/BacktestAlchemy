@@ -104,6 +104,7 @@ class Analyzers:
         df = self.daily_pnl.copy()
         # ROC
         df["pnl_pct"] = (df["pnl"] / self.capital) * 100
+        df.to_csv("check.csv")
         self.daily_pct = df.copy()
         # ROC Cummulative
         df["pnl_pct_cumulative"] = df["pnl_pct"].cumsum()

@@ -19,8 +19,8 @@ def run_combined_premium(start_date: str, end_date: str, strat_name: str, run_ba
         data = DataProducer(strategy.instrument, strategy.start_date, strategy.end_date, strategy.timeframe)
         bt = OptBacktest(strategy, data)
         bt.backtest_combined_premium_vwap()
-    Analyzers(capital=1000000, instrument="BANKNIFTY", lots=3, start_date=start_date,
-              end_date=end_date, strat_name=strat_name)
+    Analyzers(capital=1000000, instrument="BANKNIFTY", lots=1, start_date=start_date, end_date=end_date,
+              strat_name=strat_name, slippage=0.025)
 
 
 if __name__ == "__main__":
