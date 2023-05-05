@@ -4,8 +4,28 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import calendar
 import os
+import matplotlib.ticker as mtick
 from backtest.strategy.strategy import Strategy
 from backtest.utils.utils import get_instrument_lot_size, calculate_leverage, NOTIONAL_VALUE_ASSUMED
+
+
+def get_x_freq(df: pd.DataFrame) -> str:
+    """Returns frequency of date based on df"""
+    n = len(df)
+    if n > 800:
+        freq = "Y"
+    elif n > 150:
+        freq = 'M'
+
+    elif 100 <= n < 150:
+        freq = '20D'
+    elif 50 <= n < 100:
+        freq = '10D'
+    elif 25 <= n < 50:
+        freq = '5D'
+    else:
+        freq = 'D'
+    return freq
 
 
 class Analyzers:
@@ -24,6 +44,141 @@ class Analyzers:
         self.metrics_path = os.path.join(self.strat_dir, "metrics.csv")
         self.tradebook_path = os.path.join(self.strat_dir, f"{self.strat_name}_tradebook.csv")
         self.tradebook_df = pd.read_csv(self.tradebook_path)
+        self.daily_pnl = None
+        self.daily_pct = None
+        self.calculate_metrices()
+        self.plot_pnl_curve()
+        self.plot_monthly_heatmap(figsize=(8, 5))
+
+    def plot_monthly_heatmap(self, figsize=None):
+        df = self.daily_pct
+        df["month"] = df["date"].dt.month
+        df["year"] = df["date"].dt.year
+        monthly_returns = df.groupby(['year', 'month'])['pnl_pct'].sum().reset_index()
+        monthly_returns['month_name'] = monthly_returns['month'].apply(lambda x: calendar.month_abbr[x])
+        month_order = [calendar.month_abbr[i] for i in range(1, 13)]
+        print(month_order)
+        monthly_returns['month_name'] = pd.Categorical(monthly_returns['month_name'], categories=month_order,
+                                                       ordered=True)
+        monthly_returns.sort_values(['year', 'month_name'], inplace=True)
+        monthly_returns_pivot = monthly_returns.pivot(index='year', columns='month_name', values='pnl_pct')
+        monthly_returns_pivot.columns = map(lambda x: str(x).upper(), monthly_returns_pivot.columns)
+        monthly_returns_pivot.columns.name = None
+        fig_height = len(monthly_returns_pivot) / 3
+        if figsize is None:
+            size = list(plt.gcf().get_size_inches())
+            figsize = (size[0], size[1])
+        figsize = (figsize[0], max([fig_height, figsize[1]]))
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+
+        fig.set_facecolor('white')
+        ax.set_facecolor('white')
+        ax.set_title('      Monthly Returns (%)\n', fontsize=14, y=.995,
+                     fontname="Arial", fontweight='bold', color='black')
+        ax = sns.heatmap(monthly_returns_pivot, ax=ax, annot=True, center=0,
+                         annot_kws={"size": 10},
+                         fmt="0.2f", linewidths=0.5,
+                         square=True, cbar=False, cmap="RdYlGn",
+                         cbar_kws={'format': '%.0f%%'})
+        ax.set_ylabel('Years', fontname="Arial",
+                      fontweight='bold', fontsize=12)
+        ax.yaxis.set_label_coords(-.1, .5)
+        ax.tick_params(colors="#808080")
+        plt.xticks(rotation=0, fontsize=10 * 1.2)
+        plt.yticks(rotation=0, fontsize=10 * 1.2)
+        try:
+            plt.subplots_adjust(hspace=0, bottom=0, top=1)
+        except Exception:
+            pass
+        try:
+            fig.tight_layout(w_pad=0, h_pad=0)
+        except Exception:
+            pass
+        plt.savefig(os.path.join(self.strat_dir, "monthly_returns.png"))
+
+    def plot_pnl_curve(self):
+        df = self.daily_pnl.copy()
+        # ROC
+        df["pnl_pct"] = (df["pnl"] / self.capital) * 100
+        self.daily_pct = df.copy()
+        # ROC Cummulative
+        df["pnl_pct_cumulative"] = df["pnl_pct"].cumsum()
+        df.at[0, "pnl"] = self.capital + df.at[0, "pnl"]
+        cumulative_pnl = np.cumsum(df['pnl'])
+        max_cumulative_pnl = np.maximum.accumulate(cumulative_pnl)
+        df["drawdown"] = ((cumulative_pnl / max_cumulative_pnl) - 1) * 100
+        df.set_index("date", inplace=True)
+        plt.figure(figsize=(15, 10))
+        plt.fill_between(df.index, df["pnl_pct_cumulative"], color='green', alpha=0.5)
+        plt.fill_between(df.index, df["drawdown"], color='red', alpha=0.5)
+
+        fmt = '%.0f%%'
+        yticks = mtick.FormatStrFormatter(fmt)
+        plt.gca().yaxis.set_major_formatter(yticks)
+
+        max_drawdown = df['drawdown'].min()
+        max_pnl_pct_cumulative = df['pnl_pct_cumulative'].max()
+
+        # Set y-axis ticks
+        yticks_values = [max_drawdown, max_pnl_pct_cumulative, 0]
+        yticks_labels = [f"{round(max_drawdown, 2)}%", f"{round(max_pnl_pct_cumulative, 2)}%", "0"]
+
+        # add ticks on Y at interval of max_pnl_pct_cumulative/6
+        max_pnl = int(max_pnl_pct_cumulative)
+        start_pnl_intrvl = max_pnl // 6
+        if start_pnl_intrvl != 0:
+            pct_cumulative_ticks = [i for i in range(start_pnl_intrvl, max_pnl + 1, start_pnl_intrvl)]
+            pct_cumulative_ticklabels = [f"{round(x, 2)}%" for x in pct_cumulative_ticks]
+            yticks_values.extend(pct_cumulative_ticks)
+            yticks_labels.extend(pct_cumulative_ticklabels)
+
+        # add ticks on Y at interval of max_drawdown/2
+        max_dd = abs(int(max_drawdown))
+        start_dd_intrvl = max_dd // 2
+        if start_dd_intrvl != 0:
+            max_dd_ticks = [-1 * i for i in range(start_dd_intrvl, max_dd, start_dd_intrvl)]
+            mad_dd_ticklabels = [f"-{round(x, 2)}%" for x in max_dd_ticks]
+            yticks_values.extend(max_dd_ticks)
+            yticks_labels.extend(mad_dd_ticklabels)
+        x_freq = get_x_freq(df)
+        date_ticks = pd.date_range(df.index.min(), df.index.max(), freq=x_freq)
+        date_labels = date_ticks.strftime('%d %b-%y')
+        if x_freq == "M":
+            date_labels = date_ticks.strftime('%b-%y')
+        if x_freq == "Y":
+            date_labels = date_ticks.strftime('%y')
+
+        plt.yticks(yticks_values, yticks_labels)
+        plt.xticks(date_ticks, date_labels)
+
+        # Draw horizontal lines at the y-coordinates for Max Drawdown and Max Drawdown
+        plt.axhline(max_drawdown, color='red', linestyle='--', label='Max Drawdown')
+        plt.axhline(0, color='black', linestyle='--', alpha=0.5)
+        plt.axhline(max_pnl_pct_cumulative, color='green', linestyle='--', label='Max PnL(%)')
+
+        plt.xticks(rotation=25, fontsize=15)
+        plt.yticks(fontsize=15)
+
+        # plt.legend(loc="center left")
+        plt.legend(loc='upper left', bbox_to_anchor=(0, 0.9), fontsize=15)
+        plt.xlabel("Date", fontsize=15)
+        plt.ylabel("P&L", fontsize=15)
+        plt.title("P&L vs Drawdown", fontsize=15)
+        plt.grid(True, alpha=0.2)
+        plt.savefig(os.path.join(self.strat_dir, "pnl_dd_plot.png"))
+
+    def max_drawdown(self, daily_pnl: pd.DataFrame):
+        """Calculates the maximum drawdown"""
+        cumulative_points = np.cumsum(daily_pnl['pnl'])
+        max_cumulative_points = np.maximum.accumulate(cumulative_points)
+        drawdown = max_cumulative_points - cumulative_points
+        max_drawdown = np.max(drawdown)
+        max_drawdown_pct = np.max(drawdown / max_cumulative_points) * 100
+        return max_drawdown, max_drawdown_pct
 
     def calculate_metrices(self):
         """Calculates Metrices from tradebook"""
@@ -46,6 +201,7 @@ class Analyzers:
                                                                     "total trade": total_trades})], ignore_index=True)
         day_points_df["date"] = pd.to_datetime(day_points_df["date"])
         day_points_df["pnl"] = day_points_df["points"] * self.position_size
+        self.daily_pnl = day_points_df.copy()
         day_points_df.at[0, "pnl"] = self.capital + day_points_df.at[0, "pnl"]
         day_points_df.set_index("date", inplace=True)
         day_points_df = day_points_df.dropna()
@@ -68,22 +224,10 @@ class Analyzers:
         # Calculate max loss
         max_loss = np.min(day_points_df['points'])
 
-        # Calculate max drawdown
-        cumulative_points = np.cumsum(day_points_df['pnl'])
-        max_cumulative_points = np.maximum.accumulate(cumulative_points)
-        drawdown = max_cumulative_points - cumulative_points
-        max_drawdown = np.max(drawdown)
-        max_drawdown_days = len(drawdown[drawdown == max_drawdown])
-        max_drawdown_days_idx = np.where(drawdown == max_drawdown)[0]
-        max_drawdown_start_day = day_points_df.iloc[max_drawdown_days_idx[0]].name.date()
-        max_drawdown_end_day = day_points_df.iloc[max_drawdown_days_idx[-1]].name.date()
-
-        # Calculate max drawdown percentage
-
-        max_drawdown_percentage = np.max(drawdown / max_cumulative_points) * 100
+        max_dd, max_dd_pct = self.max_drawdown(day_points_df)
 
         # Calculate calmar
-        calmar = (total_points * self.position_size / max_drawdown) if max_drawdown > 0 else 0
+        calmar = (total_points * self.position_size / max_dd) if max_dd > 0 else 0
 
         # Calculate win rate
         win_rate = (total_wins / total_trades)
@@ -154,9 +298,9 @@ class Analyzers:
             'Max Loss (Rs)': round(max_loss * self.position_size, 2),
             'Max Winning Day': max_win_day.date(),
             'Max Losing Day': max_loss_day.date(),
-            'Max Drawdown (Rs)': round(max_drawdown, 2),
-            'Max Drawdown (%)': round(max_drawdown_percentage, 2),
-            'Max Drawdown Days': f"{max_drawdown_days}[{max_drawdown_start_day} to {max_drawdown_end_day}]",
+            'Max Drawdown (Rs)': round(max_dd, 2),
+            'Max Drawdown (%)': round(max_dd_pct, 2),
+            'Max Drawdown Days': f"{None}[{None} to {None}]",
             'Risk to reward': risk_to_reward,
             'Profit Factor': profit_factor,
             'Outlier Adjusted Profit Factor': outlier_adjusted_profit_factor,
@@ -168,56 +312,3 @@ class Analyzers:
         metrics.reset_index(drop=True, inplace=True)
         metrics = metrics.set_index('Test Start Date').T
         metrics.to_csv(self.metrics_path, index_label='Test Start Date')
-
-
-class DegenPlotter:
-    def __init__(self, day_points: pd.Series, lot_size: int, strat_name: str = ""):
-        self.curve_plot_path = os.path.join(os.getcwd(), f"{strat_name}_curve.png")
-        self.monthly_report_plot_path = os.path.join(os.getcwd(), f"{strat_name}_monthly_report.png")
-        self.day_pnl_df = pd.DataFrame(list(day_points.items()), columns=['date', 'points'])
-        self.day_pnl_df['points'] = self.day_pnl_df['points'] * lot_size
-        self.calculate_cumulative_sum()
-        self.calculate_drawdown()
-
-    def calculate_cumulative_sum(self):
-        self.day_pnl_df['cumulative'] = self.day_pnl_df['points'].cumsum()
-
-    def calculate_drawdown(self):
-        self.calculate_cumulative_sum()
-        self.day_pnl_df['peak'] = self.day_pnl_df['cumulative'].cummax()
-        self.day_pnl_df['max_drawdown'] = (self.day_pnl_df['cumulative'] - self.day_pnl_df['peak'])
-
-    def plot_curve(self):
-        fig, ax = plt.subplots(nrows=2, sharex=True, figsize=(20, 15))
-        sns.lineplot(x='date', y='cumulative', data=self.day_pnl_df, ax=ax[0])
-        ax[0].set(title='Cumulative Sum and Drawdown Plot', ylabel='Cumulative Sum')
-        sns.lineplot(x='date', y='max_drawdown', data=self.day_pnl_df, color='r', ax=ax[1])
-        ax[1].set(ylabel='Drawdown')
-        plt.xlabel('Date')
-        plt.subplots_adjust(hspace=0.01)
-        plt.savefig(self.curve_plot_path)
-
-    def plot_monthly_report(self):
-        self.day_pnl_df['date'] = pd.to_datetime(self.day_pnl_df['date'])
-        self.day_pnl_df['month'] = self.day_pnl_df['date'].dt.month
-        self.day_pnl_df['year'] = self.day_pnl_df['date'].dt.year
-        monthly_returns = self.day_pnl_df.groupby(['year', 'month'])['points'].sum().reset_index()
-        monthly_returns['month_name'] = monthly_returns['month'].apply(lambda x: calendar.month_name[x])
-        month_order = [calendar.month_name[i] for i in range(1, 13)]
-        monthly_returns['month_name'] = pd.Categorical(monthly_returns['month_name'], categories=month_order,
-                                                       ordered=True)
-        monthly_returns.sort_values(['year', 'month_name'], inplace=True)
-        monthly_returns_pivot = monthly_returns.pivot(index='year', columns='month_name', values='points')
-        plt.figure(figsize=(20, 15))
-        cmap = sns.color_palette(["red", "lightgreen"])
-        sns.heatmap(data=monthly_returns_pivot, cmap=cmap, annot=True, fmt='.2f', center=0,
-                    vmin=monthly_returns_pivot.values.min(), vmax=monthly_returns_pivot.values.max(),
-                    linecolor='white', linewidths=1, square=True, xticklabels=True, cbar=False)
-        plt.title('Total Returns Month-wise')
-        plt.xlabel('Month')
-        plt.ylabel('Year')
-        plt.savefig(self.monthly_report_plot_path)
-
-    def plot_all(self):
-        self.plot_curve()
-        self.plot_monthly_report()
