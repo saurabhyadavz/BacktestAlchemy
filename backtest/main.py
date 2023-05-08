@@ -19,13 +19,13 @@ def run_combined_premium(start_date: str, end_date: str, strat_name: str, run_ba
         data = DataProducer(strategy.instrument, strategy.start_date, strategy.end_date, strategy.timeframe)
         bt = OptBacktest(strategy, data)
         bt.backtest_combined_premium_vwap()
-    Analyzers(capital=1000000, instrument="BANKNIFTY", lots=1, start_date=start_date, end_date=end_date,
-              strat_name=strat_name, slippage=0.025)
+    Analyzers(capital=1000000, instrument="BANKNIFTY", lots=3, start_date=start_date, end_date=end_date,
+              strat_name=strat_name, slippage=0)
 
 
 if __name__ == "__main__":
     start_date = "2019-01-01"
-    end_date = "2022-12-31"
+    end_date = "2022-12-30"
     strat_name = "Combined Premium VWAP"
     run_combined_premium(start_date, end_date, strat_name, run_backtest=False)
 

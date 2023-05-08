@@ -5,6 +5,7 @@ import seaborn as sns
 import calendar
 import os
 import matplotlib.ticker as mtick
+from tabulate import tabulate
 from backtest.strategy.strategy import Strategy
 from backtest.utils.utils import get_instrument_lot_size, calculate_leverage, NOTIONAL_VALUE_ASSUMED
 
@@ -16,7 +17,6 @@ def get_x_freq(df: pd.DataFrame) -> str:
         freq = "Y"
     elif n > 150:
         freq = 'M'
-
     elif 100 <= n < 150:
         freq = '20D'
     elif 50 <= n < 100:
@@ -26,6 +26,11 @@ def get_x_freq(df: pd.DataFrame) -> str:
     else:
         freq = 'D'
     return freq
+
+
+def remove_outliers(returns, quantile=.95):
+    """Returns series of returns without the outliers"""
+    return returns[returns < returns.quantile(quantile)]
 
 
 class Analyzers:
@@ -44,14 +49,45 @@ class Analyzers:
         self.metrics_path = os.path.join(self.strat_dir, "metrics.csv")
         self.tradebook_path = os.path.join(self.strat_dir, f"{self.strat_name}_tradebook.csv")
         self.tradebook_df = pd.read_csv(self.tradebook_path)
-        self.daily_pnl = None
-        self.daily_pct = None
+        self.unable_to_trade_days = 0
+        self.daily_pnl = self.get_daily_pnl()
+        self.daily_returns = self.get_daily_returns()
         self.calculate_metrices()
+        self.drawdown_details()
         self.plot_pnl_curve()
+        self.plot_drawdown_curve()
         self.plot_monthly_heatmap(figsize=(8, 5))
 
+    def get_daily_returns(self):
+        daily_returns_df = self.daily_pnl.copy()
+        daily_returns_df["pnl_pct"] = (daily_returns_df["pnl"] / self.capital) * 100
+        return daily_returns_df
+
+    def get_daily_pnl(self):
+        tradebook_df = pd.read_csv(self.tradebook_path)
+        tradebook_df["datetime"] = pd.to_datetime(tradebook_df["datetime"])
+        tradebook_df["date"] = tradebook_df["datetime"].dt.date
+        tradebook_df["price_with_slippage"] = np.where(
+            tradebook_df["side"] == 1, tradebook_df["price"] * tradebook_df["side"] * (1 + self.slippage),
+            tradebook_df["price"] * tradebook_df["side"] * (1 - self.slippage)
+        )
+        self.unable_to_trade_days = tradebook_df.iloc[0]["unable_to_trade_days"]
+        tradebook_df.drop(["unable_to_trade_days", "is_intraday"], inplace=True, axis=1)
+        tradebook_grp = tradebook_df.groupby("date")
+        day_points_df = pd.DataFrame(columns=["date", "points", "total trade"])
+        for date, grp in tradebook_grp:
+            points = grp["price_with_slippage"].sum() * -1
+            total_trades = grp.shape[0]
+            day_points_df = pd.concat([day_points_df, pd.DataFrame({"date": [date], "points": [points],
+                                                                    "total trade": total_trades})], ignore_index=True)
+        day_points_df["date"] = pd.to_datetime(day_points_df["date"])
+        day_points_df["pnl"] = day_points_df["points"] * self.position_size
+        day_points_df = day_points_df.dropna()
+        return day_points_df
+
     def plot_monthly_heatmap(self, figsize=None):
-        df = self.daily_pct
+        df = self.daily_returns.copy()
+        df.to_csv("monthly_check.csv")
         df["month"] = df["date"].dt.month
         df["year"] = df["date"].dt.year
         monthly_returns = df.groupby(['year', 'month'])['pnl_pct'].sum().reset_index()
@@ -100,44 +136,25 @@ class Analyzers:
             pass
         plt.savefig(os.path.join(self.strat_dir, "monthly_returns.png"))
 
-    def plot_pnl_curve(self):
-        df = self.daily_pnl.copy()
-        # ROC
-        df["pnl_pct"] = (df["pnl"] / self.capital) * 100
-        df.to_csv("check.csv")
-        self.daily_pct = df.copy()
-        # ROC Cummulative
-        df["pnl_pct_cumulative"] = df["pnl_pct"].cumsum()
-        df.at[0, "pnl"] = self.capital + df.at[0, "pnl"]
-        cumulative_pnl = np.cumsum(df['pnl'])
+    def plot_drawdown_curve(self):
+        daily_returns_df = self.daily_returns.copy()
+        daily_returns_df["pnl_pct_cumulative"] = daily_returns_df["pnl_pct"].cumsum()
+        daily_returns_df.at[0, "pnl"] = self.capital + daily_returns_df.at[0, "pnl"]
+        cumulative_pnl = np.cumsum(daily_returns_df['pnl'])
         max_cumulative_pnl = np.maximum.accumulate(cumulative_pnl)
-        df["drawdown"] = ((cumulative_pnl / max_cumulative_pnl) - 1) * 100
-        df.set_index("date", inplace=True)
+        daily_returns_df["drawdown"] = ((cumulative_pnl / max_cumulative_pnl) - 1) * 100
+        daily_returns_df.set_index("date", inplace=True)
         plt.figure(figsize=(15, 10))
-        plt.fill_between(df.index, df["pnl_pct_cumulative"], color='green', alpha=0.5)
-        plt.fill_between(df.index, df["drawdown"], color='red', alpha=0.5)
-
+        plt.fill_between(daily_returns_df.index, daily_returns_df["drawdown"], color='red', alpha=0.5)
         fmt = '%.0f%%'
         yticks = mtick.FormatStrFormatter(fmt)
         plt.gca().yaxis.set_major_formatter(yticks)
 
-        max_drawdown = df['drawdown'].min()
-        max_pnl_pct_cumulative = df['pnl_pct_cumulative'].max()
+        max_drawdown = daily_returns_df['drawdown'].min()
 
-        # Set y-axis ticks
-        yticks_values = [max_drawdown, max_pnl_pct_cumulative, 0]
-        yticks_labels = [f"{round(max_drawdown, 2)}%", f"{round(max_pnl_pct_cumulative, 2)}%", "0"]
+        yticks_values = [max_drawdown, 0]
+        yticks_labels = [f"{round(max_drawdown, 2)}%", "0"]
 
-        # add ticks on Y at interval of max_pnl_pct_cumulative/6
-        max_pnl = int(max_pnl_pct_cumulative)
-        start_pnl_intrvl = max_pnl // 6
-        if start_pnl_intrvl != 0:
-            pct_cumulative_ticks = [i for i in range(start_pnl_intrvl, max_pnl + 1, start_pnl_intrvl)]
-            pct_cumulative_ticklabels = [f"{round(x, 2)}%" for x in pct_cumulative_ticks]
-            yticks_values.extend(pct_cumulative_ticks)
-            yticks_labels.extend(pct_cumulative_ticklabels)
-
-        # add ticks on Y at interval of max_drawdown/2
         max_dd = abs(int(max_drawdown))
         start_dd_intrvl = max_dd // 2
         if start_dd_intrvl != 0:
@@ -145,19 +162,68 @@ class Analyzers:
             mad_dd_ticklabels = [f"-{round(x, 2)}%" for x in max_dd_ticks]
             yticks_values.extend(max_dd_ticks)
             yticks_labels.extend(mad_dd_ticklabels)
-        x_freq = get_x_freq(df)
-        date_ticks = pd.date_range(df.index.min(), df.index.max(), freq=x_freq)
+        x_freq = get_x_freq(daily_returns_df)
+        date_ticks = pd.date_range(daily_returns_df.index.min(), daily_returns_df.index.max(), freq=x_freq)
         date_labels = date_ticks.strftime('%d %b-%y')
         if x_freq == "M":
             date_labels = date_ticks.strftime('%b-%y')
         if x_freq == "Y":
-            date_labels = date_ticks.strftime('%y')
+            date_labels = date_ticks.strftime('%Y')
+
+        plt.yticks(yticks_values, yticks_labels)
+        plt.xticks(date_ticks, date_labels)
+        plt.axhline(max_drawdown, color='red', linestyle='--', label='Max Drawdown')
+        plt.axhline(0, color='black', linestyle='--', alpha=0.5)
+        plt.xticks(rotation=25, fontsize=15)
+        plt.yticks(fontsize=15)
+
+        plt.legend(loc='lower left', bbox_to_anchor=(0, 0.1), fontsize=15)
+        plt.xlabel("Date", fontsize=15)
+        plt.ylabel("Drawdown(%)", fontsize=15)
+        plt.title("Drawdown", fontsize=15)
+        plt.grid(True, alpha=0.2)
+        plt.savefig(os.path.join(self.strat_dir, "dd.png"))
+
+    def plot_pnl_curve(self):
+        daily_returns_df = self.daily_returns.copy()
+        daily_returns_df.to_csv("daily_returns.csv")
+        # ROC Cummulative
+        daily_returns_df["pnl_pct_cumulative"] = daily_returns_df["pnl_pct"].cumsum()
+
+        daily_returns_df.set_index("date", inplace=True)
+        plt.figure(figsize=(15, 10))
+        plt.fill_between(daily_returns_df.index, daily_returns_df["pnl_pct_cumulative"], color='green', alpha=0.5)
+
+        fmt = '%.0f%%'
+        yticks = mtick.FormatStrFormatter(fmt)
+        plt.gca().yaxis.set_major_formatter(yticks)
+
+        max_pnl_pct_cumulative = daily_returns_df['pnl_pct_cumulative'].max()
+
+        # Set y-axis ticks
+        yticks_values = [max_pnl_pct_cumulative, 0]
+        yticks_labels = [f"{round(max_pnl_pct_cumulative, 2)}%", "0"]
+
+        # add ticks on Y at interval of max_pnl_pct_cumulative/6
+        max_pnl = int(max_pnl_pct_cumulative)
+        start_pnl_intrvl = max_pnl // 6
+        if start_pnl_intrvl != 0:
+            pct_cumulative_ticks = [i for i in range(start_pnl_intrvl, max_pnl - start_pnl_intrvl, start_pnl_intrvl)]
+            pct_cumulative_ticklabels = [f"{round(x, 2)}%" for x in pct_cumulative_ticks]
+            yticks_values.extend(pct_cumulative_ticks)
+            yticks_labels.extend(pct_cumulative_ticklabels)
+
+        x_freq = get_x_freq(daily_returns_df)
+        date_ticks = pd.date_range(daily_returns_df.index.min(), daily_returns_df.index.max(), freq=x_freq)
+        date_labels = date_ticks.strftime('%d %b-%y')
+        if x_freq == "M":
+            date_labels = date_ticks.strftime('%b-%y')
+        if x_freq == "Y":
+            date_labels = date_ticks.strftime('%Y')
 
         plt.yticks(yticks_values, yticks_labels)
         plt.xticks(date_ticks, date_labels)
 
-        # Draw horizontal lines at the y-coordinates for Max Drawdown and Max Drawdown
-        plt.axhline(max_drawdown, color='red', linestyle='--', label='Max Drawdown')
         plt.axhline(0, color='black', linestyle='--', alpha=0.5)
         plt.axhline(max_pnl_pct_cumulative, color='green', linestyle='--', label='Max PnL(%)')
 
@@ -167,42 +233,66 @@ class Analyzers:
         # plt.legend(loc="center left")
         plt.legend(loc='upper left', bbox_to_anchor=(0, 0.9), fontsize=15)
         plt.xlabel("Date", fontsize=15)
-        plt.ylabel("P&L", fontsize=15)
-        plt.title("P&L vs Drawdown", fontsize=15)
+        plt.ylabel("P&L(%)", fontsize=15)
+        plt.title("P&L", fontsize=15)
         plt.grid(True, alpha=0.2)
-        plt.savefig(os.path.join(self.strat_dir, "pnl_dd_plot.png"))
+        plt.savefig(os.path.join(self.strat_dir, "pnl_curve.png"))
 
-    def max_drawdown(self, daily_pnl: pd.DataFrame):
+    def drawdown_series(self):
         """Calculates the maximum drawdown"""
-        cumulative_points = np.cumsum(daily_pnl['pnl'])
+        df = self.daily_pnl.copy()
+        df.at[0, "pnl"] = self.capital + df.at[0, "pnl"]
+        df.set_index("date", inplace=True)
+        cumulative_points = np.cumsum(df['pnl'])
         max_cumulative_points = np.maximum.accumulate(cumulative_points)
         drawdown = max_cumulative_points - cumulative_points
-        max_drawdown = np.max(drawdown)
-        max_drawdown_pct = np.max(drawdown / max_cumulative_points) * 100
-        return max_drawdown, max_drawdown_pct
+        return drawdown, max_cumulative_points
+
+    def drawdown_details(self):
+        drawdown, max_cumulative_points = self.drawdown_series()
+        drawdown = (drawdown / max_cumulative_points) * 100
+        no_dd = drawdown == 0
+
+        # extract dd start dates
+        starts = ~no_dd & no_dd.shift(1)
+        starts = list(starts[starts].index)
+
+        # extract end dates
+        ends = no_dd & (~no_dd).shift(1)
+        ends = list(ends[ends].index)
+
+        # no drawdown :)
+        if not starts:
+            return pd.DataFrame(index=[], columns=['Started', 'Recovered', 'Drawdown', 'Days'])
+
+        # drawdown series begins in a drawdown
+        if ends and starts[0] > ends[0]:
+            starts.insert(0, drawdown.index[0])
+
+        # series ends in a drawdown fill with last date
+        if not ends or starts[-1] > ends[-1]:
+            ends.append(drawdown.index[-1])
+
+        # build dataframe from results
+        data = []
+
+        for i, _ in enumerate(starts):
+            dd = drawdown[starts[i]:ends[i]]
+            data.append((starts[i].date(), ends[i].date(), round(dd.max(), 2), (ends[i] - starts[i]).days))
+
+        df = pd.DataFrame(data=data, columns=['Started', 'Recovered', 'Drawdown', 'Days'])
+        df.sort_values(by="Drawdown", ascending=False, inplace=True)
+        df.reset_index(drop=True, inplace=True)
+        if not df.empty:
+            if len(df) > 10:
+                df = df.head(10)
+                df.to_csv(os.path.join(self.strat_dir, "worst_10_drawdowns.csv"), index=False)
+
 
     def calculate_metrices(self):
         """Calculates Metrices from tradebook"""
-
-        tradebook_df = self.tradebook_df.copy()
-        tradebook_df["datetime"] = pd.to_datetime(tradebook_df["datetime"])
-        tradebook_df["date"] = tradebook_df["datetime"].dt.date
-        tradebook_df["price_with_slippage"] = np.where(
-            tradebook_df["side"] == 1, tradebook_df["price"] * tradebook_df["side"] * (1 + self.slippage),
-            tradebook_df["price"] * tradebook_df["side"] * (1 - self.slippage)
-        )
-        unable_to_trade_days = tradebook_df.iloc[0]["unable_to_trade_days"]
-        tradebook_df.drop(["unable_to_trade_days", "is_intraday"], inplace=True, axis=1)
-        tradebook_grp = tradebook_df.groupby("date")
-        day_points_df = pd.DataFrame(columns=["date", "points", "total trade"])
-        for date, grp in tradebook_grp:
-            points = grp["price_with_slippage"].sum() * -1
-            total_trades = grp.shape[0]
-            day_points_df = pd.concat([day_points_df, pd.DataFrame({"date": [date], "points": [points],
-                                                                    "total trade": total_trades})], ignore_index=True)
-        day_points_df["date"] = pd.to_datetime(day_points_df["date"])
-        day_points_df["pnl"] = day_points_df["points"] * self.position_size
-        self.daily_pnl = day_points_df.copy()
+        day_points_df = self.daily_pnl.copy()
+        day_points_df.to_csv("daily_points.csv")
         day_points_df.at[0, "pnl"] = self.capital + day_points_df.at[0, "pnl"]
         day_points_df.set_index("date", inplace=True)
         day_points_df = day_points_df.dropna()
@@ -225,7 +315,9 @@ class Analyzers:
         # Calculate max loss
         max_loss = np.min(day_points_df['points'])
 
-        max_dd, max_dd_pct = self.max_drawdown(day_points_df)
+        drawdown, max_cumulative_points = self.drawdown_series()
+        max_dd_pct = np.max(drawdown / max_cumulative_points) * 100
+        max_dd = np.max(drawdown)
 
         # Calculate calmar
         calmar = (total_points * self.position_size / max_dd) if max_dd > 0 else 0
@@ -270,7 +362,7 @@ class Analyzers:
                                         'Avg Profit on Profit Days (Rs)', 'Avg Loss on Loss Days (Rs)',
                                         'Average Monthly ROI (%)', 'Total Profit (Rs)', 'Max Profit (Rs)',
                                         'Max Loss (Rs)', 'Max Winning Day', 'Max Losing Day', 'Max Drawdown (Rs)',
-                                        'Max Drawdown (%)', 'Max Drawdown Days', 'Risk to reward', 'Profit Factor',
+                                        'Max Drawdown (%)', 'Risk to reward', 'Profit Factor',
                                         'Outlier Adjusted Profit Factor', 'Expectancy',
                                         'Calmar', 'Sharpe Ratio (Annualised)', 'Sortino Ratio (Annualised)',
                                         'Unable to trade days'])
@@ -301,7 +393,6 @@ class Analyzers:
             'Max Losing Day': max_loss_day.date(),
             'Max Drawdown (Rs)': round(max_dd, 2),
             'Max Drawdown (%)': round(max_dd_pct, 2),
-            'Max Drawdown Days': f"{None}[{None} to {None}]",
             'Risk to reward': risk_to_reward,
             'Profit Factor': profit_factor,
             'Outlier Adjusted Profit Factor': outlier_adjusted_profit_factor,
@@ -309,7 +400,7 @@ class Analyzers:
             'Calmar': round(calmar, 2),
             'Sharpe Ratio (Annualised)': round(sharpe, 2),
             'Sortino Ratio (Annualised)': round(sortino, 2),
-            'Unable to trade days': unable_to_trade_days}, index=[0])], ignore_index=True)
+            'Unable to trade days': self.unable_to_trade_days}, index=[0])], ignore_index=True)
         metrics.reset_index(drop=True, inplace=True)
         metrics = metrics.set_index('Test Start Date').T
         metrics.to_csv(self.metrics_path, index_label='Test Start Date')
