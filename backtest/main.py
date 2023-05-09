@@ -41,32 +41,3 @@ if __name__ == "__main__":
     end_date = "2019-12-31"
     strat_name = "straddle_simple"
     run_simple_straddle(start_date, end_date, strat_name, run_backtest=False)
-
-    # import time
-    # start_time = time.time()
-    #
-    # with concurrent.futures.ThreadPoolExecutor(max_workers=7) as executor:
-    #     future_results = []
-    #     for year in range(2016, 2023):
-    #         start_date = date(year, 1, 1).strftime('%Y-%m-%d')
-    #         end_date = date(year, 12, 31).strftime('%Y-%m-%d')
-    #         print(start_date, end_date)
-    #         future = executor.submit(run_combined_premium, start_date, end_date)
-    #         future_results.append(future)
-    #
-    #     for future in concurrent.futures.as_completed(future_results):
-    #         unable_to_trade_days, points = future.result()
-    #         randomm = random.randint(0, 100)
-    #         points.to_csv(f"{randomm}_points.csv")
-    #         total_unable_to_trade_days += unable_to_trade_days
-    #         points_list.append(points)
-    #
-    # df = pd.concat(points_list)
-    #
-    # # df = df.sort_values(by='date')
-    # df.to_csv("points_2020_2022.csv")
-    #
-    # end_time = time.time()
-    # total_time = end_time - start_time
-    #
-    # print(f'The program took {total_time:.2f} seconds to run.')
