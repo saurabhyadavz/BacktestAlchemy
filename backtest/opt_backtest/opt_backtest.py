@@ -20,11 +20,13 @@ class OptBacktest:
     def backtest_simple_straddle(self):
         df = self.data.resampled_historical_df
         df["day"] = df["date"].dt.date
-        df["Points"] = 0
+        unable_to_trade_days = 0
+        tradebook = {'datetime': [], 'price': [], 'side': [], "is_intraday": self.strategy.is_intraday,
+                     "unable_to_trade_days": 0}
         date_points = pd.Series(index=df['date'].dt.date.unique(), dtype=object)
         day_groups = df.groupby("day")
         for day, day_df in day_groups:
-            entry_close_price = day_df.loc[day_df["date"].dt.time == self.strategy.start_time, "close"].iloc[0]
+            entry_close_price = day_df.loc[day_df["date"].dt.time == self.strategy.start_time, "open"].iloc[0]
             atm = int(round(entry_close_price, -2))
             closest_expiry = self.data.get_closet_expiry(self.strategy.instrument, day, week_number=0)
             expiry_comp = self.data.get_expiry_comp_from_date(self.strategy.instrument, closest_expiry)
@@ -33,55 +35,84 @@ class OptBacktest:
             atm_pe_symbol = f"{self.data.instrument}{expiry_comp}{atm}PE"
             option_symbols.append(atm_ce_symbol)
             option_symbols.append(atm_pe_symbol)
-            is_symbol_missing = False
+
             is_symbol_missing, day_df = utils.get_merged_opt_symbol_df(day_df, option_symbols, day,
                                                                        self.strategy.timeframe)
-
             if is_symbol_missing:
+                unable_to_trade_days += 1
                 continue
+
             ce_stoploss_price, pe_stoploss_price = None, None
             ce_short_price, pe_short_price = None, None
-            day_pnl = 0
             is_ce_leg_open, is_pe_leg_open = False, False
             is_position = False
 
             for idx, row in day_df.iterrows():
                 curr_time = row["date"].time()
-                curr_ce_price = row[f"{atm_ce_symbol}_close"]
-                curr_pe_price = row[f"{atm_pe_symbol}_close"]
+
                 if curr_time < self.strategy.start_time:
                     continue
+
                 if curr_time >= self.strategy.start_time and not is_position:
+                    curr_ce_price = row[f"{atm_ce_symbol}_open"]
+                    curr_pe_price = row[f"{atm_pe_symbol}_open"]
                     ce_short_price = curr_ce_price
                     pe_short_price = curr_pe_price
+                    tradebook["datetime"].append(day_df.loc[idx, "date"])
+                    tradebook["price"].append(ce_short_price)
+                    tradebook["side"].append(-1)
+                    tradebook["datetime"].append(day_df.loc[idx, "date"])
+                    tradebook["price"].append(pe_short_price)
+                    tradebook["side"].append(-1)
+                    self.backtest_logger.logger.info(f"{row['date']} Shorted {atm_ce_symbol}@{curr_ce_price} & {atm_pe_symbol}@{curr_pe_price}")
                     is_ce_leg_open, is_pe_leg_open = True, True
                     is_position = True
-                    ce_stoploss_price = (1 + self.strategy.stop_loss) * ce_short_price
-                    pe_stoploss_price = (1 + self.strategy.stop_loss) * pe_short_price
-                else:
-                    if curr_time >= self.strategy.end_time:
-                        if is_ce_leg_open:
-                            day_pnl += (ce_short_price - curr_ce_price)
-                            day_df.loc[idx, "Points"] += (ce_short_price - curr_ce_price)
-                        if is_pe_leg_open:
-                            day_pnl += (pe_short_price - curr_pe_price)
-                            day_df.loc[idx, "Points"] += (pe_short_price - curr_pe_price)
-                        break
-                    if curr_ce_price >= ce_stoploss_price and is_ce_leg_open:
-                        day_pnl += (ce_short_price - curr_ce_price)
-                        day_df.loc[idx, "Points"] += (ce_short_price - curr_ce_price)
-                        is_ce_leg_open = False
-                        if is_pe_leg_open and self.strategy.move_sl_to_cost:
-                            pe_stoploss_price = pe_short_price
+                    ce_stoploss_price = (1 + self.strategy.stoploss_pct) * ce_short_price
+                    pe_stoploss_price = (1 + self.strategy.stoploss_pct) * pe_short_price
 
-                    if curr_pe_price >= pe_stoploss_price and is_pe_leg_open:
-                        day_pnl += (pe_short_price - curr_pe_price)
-                        day_df.loc[idx, "Points"] += (pe_short_price - curr_pe_price)
-                        is_pe_leg_open = False
-                        if is_ce_leg_open and self.strategy.move_sl_to_cost:
-                            ce_stoploss_price = ce_short_price
-            date_points.loc[day] = day_df['Points'].sum()
-        return date_points
+                if curr_time >= self.strategy.end_time:
+                    curr_ce_price = row[f"{atm_ce_symbol}_open"]
+                    curr_pe_price = row[f"{atm_pe_symbol}_open"]
+                    if is_ce_leg_open:
+                        self.backtest_logger.logger.info(
+                            f"{row['date']} Day End: Closing {atm_ce_symbol}@{curr_ce_price}")
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(curr_ce_price)
+                        tradebook["side"].append(1)
+                    if is_pe_leg_open:
+                        self.backtest_logger.logger.info(
+                            f"{row['date']} Day End: Closing {atm_pe_symbol}@{curr_pe_price}")
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(curr_pe_price)
+                        tradebook["side"].append(1)
+                    break
+
+                if row[f"{atm_ce_symbol}_high"] >= ce_stoploss_price and is_ce_leg_open:
+                    self.backtest_logger.logger.info(
+                        f"{row['date']} CE SL HIT: Closing {atm_ce_symbol}@{ce_stoploss_price}")
+                    tradebook["datetime"].append(day_df.loc[idx, "date"])
+                    tradebook["price"].append(ce_stoploss_price)
+                    tradebook["side"].append(1)
+                    is_ce_leg_open = False
+                    if is_pe_leg_open and self.strategy.move_sl_to_cost:
+                        self.backtest_logger.logger.info(
+                            f"{row['date']} And Moving {atm_pe_symbol} to cost")
+                        pe_stoploss_price = pe_short_price
+
+                if row[f"{atm_pe_symbol}_high"] >= pe_stoploss_price and is_pe_leg_open:
+                    tradebook["datetime"].append(day_df.loc[idx, "date"])
+                    tradebook["price"].append(pe_stoploss_price)
+                    tradebook["side"].append(1)
+                    self.backtest_logger.logger.info(
+                        f"{row['date']} PE SL HIT: Closing {atm_pe_symbol}@{pe_stoploss_price}")
+                    is_pe_leg_open = False
+                    if is_ce_leg_open and self.strategy.move_sl_to_cost:
+                        ce_stoploss_price = ce_short_price
+                        self.backtest_logger.logger.info(
+                            f"{row['date']} And Moving {atm_ce_symbol} to cost")
+
+        tradebook["unable_to_trade_days"] = unable_to_trade_days
+        save_tradebook(tradebook, self.strategy.strat_name)
 
     def backtest_positional_iron_condor(self):
         df = self.data.resampled_historical_df

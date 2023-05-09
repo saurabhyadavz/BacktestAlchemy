@@ -20,14 +20,27 @@ def run_combined_premium(start_date: str, end_date: str, strat_name: str, run_ba
         bt = OptBacktest(strategy, data)
         bt.backtest_combined_premium_vwap()
     Analyzers(capital=1000000, instrument="BANKNIFTY", lots=3, start_date=start_date, end_date=end_date,
-              strat_name=strat_name, slippage=0)
+              strat_name=strat_name, slippage=0.005)
+
+
+def run_simple_straddle(start_date: str, end_date: str, strat_name: str, run_backtest: bool = True):
+    if run_backtest:
+        strategy = Strategy(strat_name=strat_name, start_date=start_date, end_date=end_date,
+                            instrument="BANKNIFTY", capital=1000000, lots=1, is_intraday=True,
+                            start_time="9:20", end_time="15:10", timeframe="1min", expiry_week=0,
+                            stoploss_pct=0.2, move_sl_to_cost=True)
+        data = DataProducer(strategy.instrument, strategy.start_date, strategy.end_date, strategy.timeframe)
+        bt = OptBacktest(strategy, data)
+        bt.backtest_simple_straddle()
+    Analyzers(capital=180000, instrument="BANKNIFTY", lots=1, start_date=start_date, end_date=end_date,
+              strat_name=strat_name, slippage=0.01)
 
 
 if __name__ == "__main__":
     start_date = "2019-01-01"
-    end_date = "2022-12-30"
-    strat_name = "Combined Premium VWAP"
-    run_combined_premium(start_date, end_date, strat_name, run_backtest=False)
+    end_date = "2019-12-31"
+    strat_name = "straddle_simple"
+    run_simple_straddle(start_date, end_date, strat_name, run_backtest=False)
 
     # import time
     # start_time = time.time()

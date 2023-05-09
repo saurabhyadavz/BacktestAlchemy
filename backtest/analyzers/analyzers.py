@@ -5,8 +5,8 @@ import seaborn as sns
 import calendar
 import os
 import matplotlib.ticker as mtick
-from tabulate import tabulate
-from backtest.strategy.strategy import Strategy
+from fpdf import FPDF
+import csv
 from backtest.utils.utils import get_instrument_lot_size, calculate_leverage, NOTIONAL_VALUE_ASSUMED
 
 
@@ -23,6 +23,8 @@ def get_x_freq(df: pd.DataFrame) -> str:
         freq = '10D'
     elif 25 <= n < 50:
         freq = '5D'
+    elif 10 <= n < 25:
+        freq = '2D'
     else:
         freq = 'D'
     return freq
@@ -57,6 +59,7 @@ class Analyzers:
         self.plot_pnl_curve()
         self.plot_drawdown_curve()
         self.plot_monthly_heatmap(figsize=(8, 5))
+        self.prepare_pdf_report()
 
     def get_daily_returns(self):
         daily_returns_df = self.daily_pnl.copy()
@@ -182,7 +185,7 @@ class Analyzers:
         plt.ylabel("Drawdown(%)", fontsize=15)
         plt.title("Drawdown", fontsize=15)
         plt.grid(True, alpha=0.2)
-        plt.savefig(os.path.join(self.strat_dir, "dd.png"))
+        plt.savefig(os.path.join(self.strat_dir, "dd_curve.png"))
 
     def plot_pnl_curve(self):
         daily_returns_df = self.daily_returns.copy()
@@ -286,7 +289,7 @@ class Analyzers:
         if not df.empty:
             if len(df) > 10:
                 df = df.head(10)
-                df.to_csv(os.path.join(self.strat_dir, "worst_10_drawdowns.csv"), index=False)
+            df.to_csv(os.path.join(self.strat_dir, "worst_10_drawdowns.csv"), index=False)
 
 
     def calculate_metrices(self):
@@ -404,3 +407,71 @@ class Analyzers:
         metrics.reset_index(drop=True, inplace=True)
         metrics = metrics.set_index('Test Start Date').T
         metrics.to_csv(self.metrics_path, index_label='Test Start Date')
+
+    def prepare_pdf_report(self):
+
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=16)
+
+        title_width = pdf.get_string_width("Backtest Report")
+        x_pos = (pdf.w - title_width) / 2
+
+        pdf.set_xy(x_pos, 5)
+        pdf.cell(title_width, 10, "Backtest Report", 0, 2, "C")
+        pdf.line(x_pos, 15, x_pos + title_width, 15)
+
+        pdf.image(os.path.join(self.strat_dir, "pnl_curve.png"), x=-0.5, y=20, w=(pdf.w + 1) / 1)
+        pdf.image(os.path.join(self.strat_dir, "dd_curve.png"), x=-0.5, y=160, w=(pdf.w + 1) / 1)
+
+        pdf.add_page()
+
+        # Add the CSV data to the PDF as a table
+        with open(os.path.join(self.strat_dir, "metrics.csv"), "r") as csv_file:
+            reader = csv.reader(csv_file)
+            data = []
+            for row in reader:
+                data.append(row)
+            title_width = pdf.get_string_width("Key Performance Metrics")
+            x_pos = (pdf.w - title_width) / 2
+            pdf.set_font("Arial", size=13)
+            pdf.set_xy(x_pos, 5)
+            pdf.cell(title_width, 10, "Key Performance Metrics", 0, 2, "C")
+
+            pdf.set_font("Arial", size=11)
+
+            col_width = pdf.w / 3
+            row_height = pdf.font_size * 2
+
+            for row in data:
+                pdf.set_x(col_width / 2 - 18)
+                for item in row:
+                    pdf.cell(col_width + 20, row_height, str(item), border=1)
+                pdf.ln(row_height)
+        pdf.add_page()
+
+        with open(os.path.join(self.strat_dir, "worst_10_drawdowns.csv"), "r") as csv_file:
+            reader = csv.reader(csv_file)
+            data = []
+            for row in reader:
+                data.append(row)
+            title_width = pdf.get_string_width("Worst 10 Drawdowns")
+            x_pos = (pdf.w - title_width) / 2
+            pdf.set_font("Arial", size=12)
+            pdf.set_xy(x_pos, 5)
+            pdf.cell(title_width, 10, "Worst 10 Drawdowns", 0, 2, "C")
+
+            pdf.set_font("Arial", size=10)
+
+            col_width = pdf.w / 4
+            row_height = 10
+
+            for row in data:
+                pdf.set_x(col_width / 2)
+                for item in row:
+                    pdf.cell(40, row_height, str(item), border=1)
+                pdf.ln(row_height)
+
+        pdf.image(os.path.join(self.strat_dir, "monthly_returns.png"), x=4, y=130, w=(pdf.w - 10))
+
+        pdf.output(os.path.join(self.strat_dir, f"{self.strat_name.lower()}_report.pdf"))

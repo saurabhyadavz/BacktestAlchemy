@@ -10,7 +10,7 @@ class Strategy:
                  re_entry_count: int = 0, re_execute_count: int = 0, stoploss_mtm_rupees: int = None,
                  timeframe: str = "1min", move_sl_to_cost: bool = False,
                  trading_days_before_expiry=None, how_far_otm_hedge_point: int = None,
-                 how_far_otm_short_point: int = None, expiry_week: int = 0):
+                 how_far_otm_short_point: int = None, expiry_week: int = 0, stoploss_pct: float = None):
         self.strat_name = strat_name
         self.start_date = start_date
         self.end_date = end_date
@@ -18,6 +18,7 @@ class Strategy:
         self.is_intraday = is_intraday
         self.start_time = utils.str_to_time_obj(start_time)
         self.end_time = utils.str_to_time_obj(end_time)
+        self.stoploss_pct = stoploss_pct
         self.stoploss_mtm_points = -1 * stoploss_mtm_points if stoploss_mtm_points is not None else stoploss_mtm_points
         self.stoploss_mtm_rupees = -1 * stoploss_mtm_rupees if stoploss_mtm_rupees is not None else stoploss_mtm_rupees
         self.target = target
