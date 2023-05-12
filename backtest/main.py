@@ -38,6 +38,6 @@ def run_simple_straddle(start_date: str, end_date: str, strat_name: str, run_bac
 
 if __name__ == "__main__":
     start_date = "2019-01-01"
-    end_date = "2019-12-31"
+    end_date = "2021-12-31"
     strat_name = "straddle_simple"
     run_simple_straddle(start_date, end_date, strat_name, run_backtest=False)

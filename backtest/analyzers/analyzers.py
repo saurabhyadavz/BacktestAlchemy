@@ -15,6 +15,8 @@ def get_x_freq(df: pd.DataFrame) -> str:
     n = len(df)
     if n > 800:
         freq = "Y"
+    elif n > 250:
+        freq = '3M'
     elif n > 150:
         freq = 'M'
     elif 100 <= n < 150:
@@ -90,7 +92,6 @@ class Analyzers:
 
     def plot_monthly_heatmap(self, figsize=None):
         df = self.daily_returns.copy()
-        df.to_csv("monthly_check.csv")
         df["month"] = df["date"].dt.month
         df["year"] = df["date"].dt.year
         monthly_returns = df.groupby(['year', 'month'])['pnl_pct'].sum().reset_index()
@@ -189,7 +190,6 @@ class Analyzers:
 
     def plot_pnl_curve(self):
         daily_returns_df = self.daily_returns.copy()
-        daily_returns_df.to_csv("daily_returns.csv")
         # ROC Cummulative
         daily_returns_df["pnl_pct_cumulative"] = daily_returns_df["pnl_pct"].cumsum()
 
@@ -295,7 +295,6 @@ class Analyzers:
     def calculate_metrices(self):
         """Calculates Metrices from tradebook"""
         day_points_df = self.daily_pnl.copy()
-        day_points_df.to_csv("daily_points.csv")
         day_points_df.at[0, "pnl"] = self.capital + day_points_df.at[0, "pnl"]
         day_points_df.set_index("date", inplace=True)
         day_points_df = day_points_df.dropna()
