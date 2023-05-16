@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 import calendar
@@ -7,6 +9,7 @@ import os
 import matplotlib.ticker as mtick
 from fpdf import FPDF
 import csv
+
 from backtest.utils.utils import get_instrument_lot_size, calculate_leverage, NOTIONAL_VALUE_ASSUMED
 
 
@@ -46,7 +49,6 @@ class Analyzers:
         self.strat_name = strat_name
         self.start_date = start_date
         self.end_date = end_date
-        self.position_size = get_instrument_lot_size(instrument) * lots
         self.leverage = calculate_leverage(capital, lots)
         self.slippage = slippage
         self.strat_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), strat_name)
@@ -73,20 +75,21 @@ class Analyzers:
         tradebook_df["datetime"] = pd.to_datetime(tradebook_df["datetime"])
         tradebook_df["date"] = tradebook_df["datetime"].dt.date
         tradebook_df["price_with_slippage"] = np.where(
-            tradebook_df["side"] == 1, tradebook_df["price"] * tradebook_df["side"] * (1 + self.slippage),
+            tradebook_df["side"] == 1,
+            tradebook_df["price"] * tradebook_df["side"] * (1 + self.slippage),
             tradebook_df["price"] * tradebook_df["side"] * (1 - self.slippage)
         )
         self.unable_to_trade_days = tradebook_df.iloc[0]["unable_to_trade_days"]
         tradebook_df.drop(["unable_to_trade_days", "is_intraday"], inplace=True, axis=1)
         tradebook_grp = tradebook_df.groupby("date")
-        day_points_df = pd.DataFrame(columns=["date", "points", "total trade"])
+        day_points_df = pd.DataFrame(columns=["date", "points", "pnl", "total trade"])
         for date, grp in tradebook_grp:
+            pnl = (grp["price_with_slippage"] * grp["traded_quantity"]).sum() * -1
             points = grp["price_with_slippage"].sum() * -1
             total_trades = grp.shape[0]
-            day_points_df = pd.concat([day_points_df, pd.DataFrame({"date": [date], "points": [points],
+            day_points_df = pd.concat([day_points_df, pd.DataFrame({"date": [date], "points": [points], "pnl": [pnl],
                                                                     "total trade": total_trades})], ignore_index=True)
         day_points_df["date"] = pd.to_datetime(day_points_df["date"])
-        day_points_df["pnl"] = day_points_df["points"] * self.position_size
         day_points_df = day_points_df.dropna()
         return day_points_df
 
@@ -139,6 +142,7 @@ class Analyzers:
         except Exception:
             pass
         plt.savefig(os.path.join(self.strat_dir, "monthly_returns.png"))
+        plt.close(fig)
 
     def plot_drawdown_curve(self):
         daily_returns_df = self.daily_returns.copy()
@@ -187,6 +191,7 @@ class Analyzers:
         plt.title("Drawdown", fontsize=15)
         plt.grid(True, alpha=0.2)
         plt.savefig(os.path.join(self.strat_dir, "dd_curve.png"))
+        plt.close()
 
     def plot_pnl_curve(self):
         daily_returns_df = self.daily_returns.copy()
@@ -240,16 +245,17 @@ class Analyzers:
         plt.title("P&L", fontsize=15)
         plt.grid(True, alpha=0.2)
         plt.savefig(os.path.join(self.strat_dir, "pnl_curve.png"))
+        plt.close()
 
     def drawdown_series(self):
         """Calculates the maximum drawdown"""
         df = self.daily_pnl.copy()
         df.at[0, "pnl"] = self.capital + df.at[0, "pnl"]
         df.set_index("date", inplace=True)
-        cumulative_points = np.cumsum(df['pnl'])
-        max_cumulative_points = np.maximum.accumulate(cumulative_points)
-        drawdown = max_cumulative_points - cumulative_points
-        return drawdown, max_cumulative_points
+        cumulative_pnl = np.cumsum(df['pnl'])
+        max_cumulative_pnl = np.maximum.accumulate(cumulative_pnl)
+        drawdown = max_cumulative_pnl - cumulative_pnl
+        return drawdown, max_cumulative_pnl
 
     def drawdown_details(self):
         drawdown, max_cumulative_points = self.drawdown_series()
@@ -291,11 +297,9 @@ class Analyzers:
                 df = df.head(10)
             df.to_csv(os.path.join(self.strat_dir, "worst_10_drawdowns.csv"), index=False)
 
-
     def calculate_metrices(self):
         """Calculates Metrices from tradebook"""
         day_points_df = self.daily_pnl.copy()
-        day_points_df.at[0, "pnl"] = self.capital + day_points_df.at[0, "pnl"]
         day_points_df.set_index("date", inplace=True)
         day_points_df = day_points_df.dropna()
 
@@ -303,70 +307,70 @@ class Analyzers:
         total_trades = len(day_points_df)
 
         # Calculate total wins
-        total_wins = len(day_points_df[day_points_df['points'] > 0])
+        total_wins = len(day_points_df[day_points_df['pnl'] > 0])
 
         # Calculate total losses
-        total_losses = len(day_points_df[day_points_df['points'] < 0])
+        total_losses = len(day_points_df[day_points_df['pnl'] < 0])
 
         # Calculate total points
-        total_points = np.sum(day_points_df['points'])
+        total_pnl = np.sum(day_points_df['pnl'])
 
         # Calculate max win
-        max_win = np.max(day_points_df['points'])
+        max_win = np.max(day_points_df['pnl'])
 
         # Calculate max loss
-        max_loss = np.min(day_points_df['points'])
+        max_loss = np.min(day_points_df['pnl'])
 
         drawdown, max_cumulative_points = self.drawdown_series()
         max_dd_pct = np.max(drawdown / max_cumulative_points) * 100
         max_dd = np.max(drawdown)
 
         # Calculate calmar
-        calmar = (total_points * self.position_size / max_dd) if max_dd > 0 else 0
+        calmar = (total_pnl / max_dd) if max_dd > 0 else 0
 
         # Calculate win rate
         win_rate = (total_wins / total_trades)
 
         # Calculate RR, avg win points, avg loss points, profit factor
-        win_pts = np.sum(day_points_df[day_points_df['points'] > 0]['points'])
-        loss_pts = np.sum(day_points_df[day_points_df['points'] < 0]['points'])
-        OA_adj_pts = (win_pts - max_win)
-        avg_points_on_winning_days = np.mean(day_points_df[day_points_df['points'] > 0]['points'])
-        avg_loss_on_losing_days = np.mean(day_points_df[day_points_df['points'] < 0]['points'])
-        avg_points_winning_days_oa_adj = round(OA_adj_pts / total_wins, 1)
-        risk_to_reward = round(abs(avg_points_on_winning_days / avg_loss_on_losing_days), 2)
-        profit_factor = round(abs(win_pts / loss_pts), 2)
-        outlier_adjusted_profit_factor = round(abs(OA_adj_pts / loss_pts), 2)
+        win_pnl = np.sum(day_points_df[day_points_df['pnl'] > 0]['pnl'])
+        loss_pnl = np.sum(day_points_df[day_points_df['pnl'] < 0]['pnl'])
+        OA_adj_pnl = (win_pnl - max_win)
+        avg_pnl_on_winning_days = np.mean(day_points_df[day_points_df['pnl'] > 0]['pnl'])
+        avg_pnl_on_losing_days = np.mean(day_points_df[day_points_df['pnl'] < 0]['pnl'])
+        avg_pnl_winning_days_oa_adj = round(OA_adj_pnl / total_wins, 1)
+        risk_to_reward = round(abs(avg_pnl_on_winning_days / avg_pnl_on_losing_days), 2)
+        profit_factor = round(abs(win_pnl / loss_pnl), 2)
+        outlier_adjusted_profit_factor = round(abs(OA_adj_pnl / loss_pnl), 2)
         expectancy = (win_rate * risk_to_reward) - (1 - win_rate)
 
-        points_mean = np.mean(day_points_df['points'])
+        mean_pnl = np.mean(day_points_df['pnl'])
 
         # Calculate max loss day
-        max_loss_day = day_points_df[day_points_df['points'] == max_loss].index[0]
+        max_loss_day = day_points_df[day_points_df['pnl'] == max_loss].index[0]
 
         # Calculate max win day
-        max_win_day = day_points_df[day_points_df['points'] == max_win].index[0]
+        max_win_day = day_points_df[day_points_df['pnl'] == max_win].index[0]
 
         # Calculate sharpe ratio
-        sharpe = (np.sqrt(252) * points_mean) / np.std(day_points_df['points'])
+        sharpe = (np.sqrt(252) * mean_pnl) / np.std(day_points_df['pnl'])
 
         # Calculate sortino ratio
-        down_dev = np.where(day_points_df['points'] < 0, day_points_df['points'], 0).std()
-        sortino = (np.sqrt(252) * points_mean) / down_dev
+        down_dev = np.where(day_points_df['pnl'] < 0, day_points_df['pnl'], 0).std()
+        sortino = (np.sqrt(252) * mean_pnl) / down_dev
 
         # Calculate average monthly ROI
-        monthly_returns = day_points_df['points'].resample('M').sum()
-        average_monthly_roi = np.mean(monthly_returns / total_points) * 100
+        monthly_returns = day_points_df['pnl'].resample('M').sum()
+        average_monthly_roi = np.mean(monthly_returns / total_pnl) * 100
         metrics = pd.DataFrame(columns=['Test Start Date', 'Test End Date', 'Instrument',
                                         'Strategy', 'Total Capital', 'Notional Value Asm.', 'Leverage',
                                         'Traded with Lots', 'Total Trading days', 'Win days', 'Loss Days',
                                         'Win Rate (%)', 'Avg Profit on Profit Days Outlier Adjusted (Rs)',
                                         'Avg Profit on Profit Days (Rs)', 'Avg Loss on Loss Days (Rs)',
-                                        'Average Monthly ROI (%)', 'Total Profit (Rs)', 'Max Profit (Rs)',
-                                        'Max Loss (Rs)', 'Max Winning Day', 'Max Losing Day', 'Max Drawdown (Rs)',
-                                        'Max Drawdown (%)', 'Risk to reward', 'Profit Factor',
-                                        'Outlier Adjusted Profit Factor', 'Expectancy',
-                                        'Calmar', 'Sharpe Ratio (Annualised)', 'Sortino Ratio (Annualised)',
+                                        'Average Monthly ROI (%)', 'Total Profit (Rs)','Total Profit (%)',
+                                        'Max Profit (Rs)', 'Max Loss (Rs)', 'Max Winning Day', 'Max Losing Day',
+                                        'Max Drawdown (Rs)','Max Drawdown (%)', 'Risk to reward', 'Profit Factor',
+                                        'Outlier Adjusted Profit Factor', 'Expectancy', 'Calmar',
+                                        'Sharpe Ratio (Annualised)', 'Sortino Ratio (Annualised)',
                                         'Unable to trade days'])
         metrics = pd.concat([metrics, pd.DataFrame({
             'Test Start Date': self.start_date,
@@ -381,16 +385,14 @@ class Analyzers:
             'Win days': total_wins,
             'Loss Days': total_losses,
             'Win Rate (%)': round(win_rate * 100, 2),
-            'Avg Profit on Profit Days Outlier Adjusted (Rs)': round(
-                avg_points_winning_days_oa_adj * self.position_size, 2),
-            'Avg Profit on Profit Days (Rs)': round(
-                avg_points_on_winning_days * self.position_size, 2),
-            'Avg Loss on Loss Days (Rs)': round(
-                avg_loss_on_losing_days * self.position_size, 2),
+            'Avg Profit on Profit Days Outlier Adjusted (Rs)': round(avg_pnl_winning_days_oa_adj, 2),
+            'Avg Profit on Profit Days (Rs)': round(avg_pnl_on_winning_days, 2),
+            'Avg Loss on Loss Days (Rs)': round(avg_pnl_on_losing_days, 2),
             'Average Monthly ROI (%)': round(average_monthly_roi, 2),
-            'Total Profit (Rs)': round(total_points * self.position_size, 2),
-            'Max Profit (Rs)': round(max_win * self.position_size, 2),
-            'Max Loss (Rs)': round(max_loss * self.position_size, 2),
+            'Total Profit (Rs)': round(total_pnl, 2),
+            'Total Profit (%)' : round((total_pnl/self.capital) * 100, 2),
+            'Max Profit (Rs)': round(max_win, 2),
+            'Max Loss (Rs)': round(max_loss, 2),
             'Max Winning Day': max_win_day.date(),
             'Max Losing Day': max_loss_day.date(),
             'Max Drawdown (Rs)': round(max_dd, 2),

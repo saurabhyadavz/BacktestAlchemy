@@ -154,11 +154,11 @@ class DataProducer:
         self.resampled_historical_df = resample_ohlc_df(self.historical_df, self.timeframe)
         self.expiry_week = expiry_week
         self.bnf_list_of_expiry_info_dict = get_all_expiry_info(BANKNIFTY_SYMBOL)
-        self.nf_list_of_expiry_info_dict = get_all_expiry_info(NIFTY_SYMBOL)
+        # self.nf_list_of_expiry_info_dict = get_all_expiry_info(NIFTY_SYMBOL)
         self.bnf_expiry_dates_list = get_expiry_dates(self.bnf_list_of_expiry_info_dict)
-        self.nf_expiry_dates_list = get_expiry_dates(self.nf_list_of_expiry_info_dict)
+        # self.nf_expiry_dates_list = get_expiry_dates(self.nf_list_of_expiry_info_dict)
         self.bnf_expiry_comp_dict = get_expiry_comp_dict(self.bnf_list_of_expiry_info_dict)
-        self.nf_expiry_comp_dict = get_expiry_comp_dict(self.nf_list_of_expiry_info_dict)
+        # self.nf_expiry_comp_dict = get_expiry_comp_dict(self.nf_list_of_expiry_info_dict)
         self.trading_days = get_trading_days()
 
     def get_closet_expiry(self, index: str, dt: datetime.date, week_number: int = 0) -> datetime.date:

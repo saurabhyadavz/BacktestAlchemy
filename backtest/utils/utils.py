@@ -215,7 +215,7 @@ def generate_opt_symbols_from_strike(instrument: str, atm_strike: int, expiry_co
 
 
 def get_combined_premium_df_from_trading_symbols(df: pd.DataFrame, trading_symbols: list[str], curr_date: datetime.date,
-                                                 timeframe: str) -> tuple[bool, pd.DataFrame]:
+                                                 timeframe: str, is_outerjoin: bool = False) -> tuple[bool, pd.DataFrame]:
     """
     Calculates combined premium of given strikes and returns it
     Args:
@@ -248,7 +248,10 @@ def get_combined_premium_df_from_trading_symbols(df: pd.DataFrame, trading_symbo
             high_columns.append(f"{opt_symbol}_high")
             low_columns.append(f"{opt_symbol}_low")
             volume_columns.append(f"{opt_symbol}_volume")
-            df = pd.merge(df, option_df, on='date')
+            if is_outerjoin:
+                df = pd.merge(option_df, df, on="date", how="outer")
+            else:
+                df = pd.merge(df, option_df, on="date")
     if is_symbol_missing:
         return is_symbol_missing, df
     else:
