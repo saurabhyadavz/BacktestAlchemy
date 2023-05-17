@@ -1,6 +1,9 @@
 import typing
 from datetime import datetime, time, date
 from typing import Union
+
+import numpy as np
+
 from backtest.data import data
 import os
 import pandas as pd
@@ -215,7 +218,8 @@ def generate_opt_symbols_from_strike(instrument: str, atm_strike: int, expiry_co
 
 
 def get_combined_premium_df_from_trading_symbols(df: pd.DataFrame, trading_symbols: list[str], curr_date: datetime.date,
-                                                 timeframe: str, is_outerjoin: bool = False) -> tuple[bool, pd.DataFrame]:
+                                                 timeframe: str, is_outerjoin: bool = False) -> tuple[
+    bool, pd.DataFrame]:
     """
     Calculates combined premium of given strikes and returns it
     Args:
@@ -309,3 +313,44 @@ def save_tradebook(tradebook_dict: dict[str, typing.Any], strat_name: str):
         os.mkdir(strategy_dir)
     tradebook_file_path = os.path.join(strategy_dir, f"{strat_name}_tradebook.csv")
     tradebook_df.to_csv(tradebook_file_path, index=False)
+
+
+def priority_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series) -> pd.Series:
+    """
+    Returns vwap where priority is given to recent prices
+    Args:
+        high(pd.Series): candle high series
+        low(pd.Series): candle low series
+        close(pd.Series): candle close series
+        volume(pd.Series): candle volume series
+
+    Returns:
+        pd.Series: returns vwap series
+    """
+    col = {
+        "high": high,
+        "low": low,
+        "close": close,
+        "volume": volume
+    }
+    df = pd.DataFrame(col)
+    df["date"] = df.index
+    df.reset_index(drop=True, inplace=True)
+    N = 5
+    multiplier = 2 / (N + 1)
+    df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
+    df["cumm_vol_price"] = np.nan
+    df["cumm_vol"] = np.nan
+    for i in range(len(df)):
+        if i == 0:
+            df.loc[i, "cumm_vol_price"] = df.loc[i, "typical_price"] * df.loc[i, "volume"]
+            df.loc[i, "cumm_vol"] = df.loc[i, "volume"]
+        else:
+            df.loc[i, "cumm_vol_price"] = (df.loc[i, "typical_price"] * df.loc[i, "volume"] * multiplier +
+                                           df.loc[i - 1, "cumm_vol_price"] * (1 - multiplier))
+            df.loc[i, "cumm_vol"] = df.loc[i, "volume"] * multiplier + df.loc[i - 1, "cumm_vol"] * (1 - multiplier)
+
+    df.set_index("date", inplace=True)
+    vwap = df["cumm_vol_price"] / df["cumm_vol"]
+    return vwap
+

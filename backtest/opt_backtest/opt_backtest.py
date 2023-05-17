@@ -251,11 +251,11 @@ class OptBacktest:
     def backtest_combined_premium_vwap(self):
         df = self.data.resampled_historical_df
         df["day"] = df["date"].dt.date
-        tradebook = {'datetime': [], 'price': [], 'side': [], 'traded_quantity': [], "is_intraday": self.strategy.is_intraday,
+        tradebook = {'datetime': [], 'price': [], 'side': [], 'traded_quantity': [],
+                     "is_intraday": self.strategy.is_intraday,
                      "unable_to_trade_days": 0}
         day_groups = df.groupby("day")
         unable_to_trade_days = 0
-
         for day, day_df in day_groups:
             # Getting expiry
             curr_week_expiry_dt = self.data.get_closet_expiry(self.strategy.instrument, day,
@@ -265,7 +265,7 @@ class OptBacktest:
             entry_atm = int(round(entry_close_price, -2))
             self.backtest_logger.logger.info(f"Start: {day}, atm: {entry_atm}")
             opt_symbols = utils.generate_opt_symbols_from_strike(self.strategy.instrument, entry_atm,
-                                                                 expiry_comp, "ATM", "OTM1", "OTM2", "OTM3")
+                                                                 expiry_comp, "OTM1", "OTM2", "OTM3")
             self.backtest_logger.logger.info(f"symbols: {opt_symbols}")
             is_symbol_missing, day_df = utils.get_combined_premium_df_from_trading_symbols(day_df, opt_symbols,
                                                                                            day,
@@ -328,10 +328,9 @@ class OptBacktest:
                         tradebook["traded_quantity"].append(quantity)
                         running_pnl_points += buy_price * 1
                         running_pnl_rupees += buy_price * 1 * quantity
-                        self.backtest_logger.logger.info(f"Current PNL {-1 * running_pnl_rupees}")
                         is_position = False
                         self.backtest_logger.logger.info(
-                            f"{curr_time} Exit : px@{buy_price}, vwap: {curr_vwap}, qty: {quantity}")
+                            f"{curr_time} Exit : px@{buy_price}, vwap: {curr_vwap}, qty: {quantity} PNL: {running_pnl_rupees * -1}")
                         quantity = self.strategy.position_size
 
                     if is_position:
@@ -349,32 +348,445 @@ class OptBacktest:
                                 break
                         # Check MTM in rupees stoploss
                         if self.strategy.stoploss_mtm_rupees:
+                            # Check if MTM SL hit at close
                             curr_pnl_rupees = (curr_close_price * 1 * quantity + running_pnl_rupees) * -1
                             if curr_pnl_rupees <= self.strategy.stoploss_mtm_rupees:
                                 self.backtest_logger.logger.info(
-                                    f"{curr_time}: MTM RUPEES SL HIT: px@{curr_close_price}, qty: {quantity}:"
-                                    f" C.PNL: {curr_pnl_rupees}")
+                                    f"{curr_time}: MTM RUPEES SL HIT: CLOSEpx@{curr_close_price}, qty: {quantity} C.PNL: {curr_pnl_rupees}")
                                 tradebook["datetime"].append(day_df.loc[idx, "date"])
                                 tradebook["price"].append(curr_close_price)
                                 tradebook["side"].append(1)
                                 tradebook["traded_quantity"].append(quantity)
                                 break
+
                         # Check avg MTM reached
                         if self.strategy.close_half_on_mtm_rupees and not is_half_squared_off:
                             curr_pnl_rupees = (curr_close_price * 1 * quantity + running_pnl_rupees) * -1
                             if curr_pnl_rupees >= self.strategy.close_half_on_mtm_rupees:
                                 self.backtest_logger.logger.info(
-                                    f"{curr_time} Square off half Qty: px@{curr_close_price} qty: {quantity/2}:"
+                                    f"{curr_time} Square off half Qty: px@{curr_close_price} qty: {quantity / 2}:"
                                     f" C.PNL: {curr_pnl_rupees}"
                                 )
                                 tradebook["datetime"].append(day_df.loc[idx, "date"])
                                 tradebook["price"].append(curr_close_price)
                                 tradebook["side"].append(1)
-                                tradebook["traded_quantity"].append(quantity/2)
+                                tradebook["traded_quantity"].append(quantity / 2)
                                 is_half_squared_off = True
                                 quantity = quantity / 2
                                 running_pnl_points += curr_close_price * 1
                                 running_pnl_rupees += curr_close_price * 1 * quantity
 
+        tradebook["unable_to_trade_days"] = unable_to_trade_days
+        save_tradebook(tradebook, self.strategy.strat_name)
+
+    def backtest_itm_vwap(self):
+        df = self.data.resampled_historical_df
+        df["day"] = df["date"].dt.date
+        tradebook = {'datetime': [], 'price': [], 'side': [], 'traded_quantity': [],
+                     "is_intraday": self.strategy.is_intraday,
+                     "unable_to_trade_days": 0}
+        day_groups = df.groupby("day")
+        unable_to_trade_days = 0
+        for day, day_df in day_groups:
+            # Getting expiry
+            curr_week_expiry_dt = self.data.get_closet_expiry(self.strategy.instrument, day,
+                                                              week_number=self.strategy.expiry_week)
+            expiry_comp = self.data.get_expiry_comp_from_date(self.strategy.instrument, curr_week_expiry_dt)
+            entry_close_price = day_df.loc[day_df["date"].dt.time == self.strategy.start_time, "close"].iloc[0]
+            entry_atm = int(round(entry_close_price, -2))
+            ce_opt_symbol = utils.get_opt_symbol(self.strategy.instrument, expiry_comp, entry_atm - 500, "CE")
+            pe_opt_symbol = utils.get_opt_symbol(self.strategy.instrument, expiry_comp, entry_atm + 500, "PE")
+            opt_symbols = [ce_opt_symbol, pe_opt_symbol]
+            self.backtest_logger.logger.info(f"Start: {day}, atm: {entry_atm}")
+            self.backtest_logger.logger.info(f"symbols: {opt_symbols}")
+            is_symbol_missing, day_df = utils.get_merged_opt_symbol_df(day_df, opt_symbols, day,
+                                                                       self.strategy.opt_timeframe)
+
+            if is_symbol_missing:
+                with open(os.path.join(os.getcwd(), self.strategy.strat_name, "missing_symbols.txt"), "w") as f:
+                    f.write(f"{day}\n")
+                unable_to_trade_days += 1
+                continue
+            day_df.set_index("date", inplace=True)
+            # Calculate vwap on combined premium
+            day_df[f"{ce_opt_symbol}_vwap"] = ta.vwap(high=day_df[f"{ce_opt_symbol}_high"],
+                                                      low=day_df[f"{ce_opt_symbol}_low"],
+                                                      close=day_df[f"{ce_opt_symbol}_close"],
+                                                      volume=day_df[f"{ce_opt_symbol}_volume"])
+            day_df[f"{pe_opt_symbol}_vwap"] = ta.vwap(high=day_df[f"{pe_opt_symbol}_high"],
+                                                      low=day_df[f"{pe_opt_symbol}_low"],
+                                                      close=day_df[f"{pe_opt_symbol}_close"],
+                                                      volume=day_df[f"{pe_opt_symbol}_volume"])
+            day_df = day_df.reset_index()
+            is_ce_position = False
+            running_pnl_points = 0
+            running_pnl_rupees = 0
+            total_trades = 0
+            quantity = self.strategy.position_size
+            is_half_squared_off = False
+            ce_hard_sl, pe_hard_sl = None, None
+            prev_row = pd.Series()
+            prev_prev_row = pd.Series()
+            is_pe_position = False
+            for idx, row in day_df.iterrows():
+                curr_time = day_df.loc[idx, "date"].time()
+                if curr_time >= self.strategy.end_time:
+                    if is_ce_position:
+                        buy_price = day_df.loc[idx, f"{ce_opt_symbol}_close"]
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(buy_price)
+                        tradebook["side"].append(1)
+                        tradebook["traded_quantity"].append(quantity)
+                        running_pnl_points += buy_price * 1
+                        running_pnl_rupees += buy_price * 1 * quantity
+                        self.backtest_logger.logger.info(
+                            f"{curr_time} Exit: {ce_opt_symbol} End of trade px@{day_df.loc[idx, f'{ce_opt_symbol}_close']} qty:{quantity} PNL: {running_pnl_rupees * -1}"
+                        )
+                        total_trades += 1
+
+                    if is_pe_position:
+                        buy_price = day_df.loc[idx, f"{pe_opt_symbol}_close"]
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(buy_price)
+                        tradebook["side"].append(1)
+                        tradebook["traded_quantity"].append(quantity)
+                        running_pnl_points += buy_price * 1
+                        running_pnl_rupees += buy_price * 1 * quantity
+                        self.backtest_logger.logger.info(
+                            f"{curr_time} Exit: {pe_opt_symbol} End of trade px@{buy_price} qty:{quantity} PNL: {running_pnl_rupees * -1}"
+                        )
+                        total_trades += 1
+                    break
+                if curr_time >= self.strategy.start_time and not is_ce_position:
+                    if day_df.loc[idx, f"{ce_opt_symbol}_close"] < day_df.loc[idx, f"{ce_opt_symbol}_vwap"]:
+                        curr_vwap = day_df.loc[idx, f"{ce_opt_symbol}_vwap"]
+                        short_price = day_df.loc[idx, f"{ce_opt_symbol}_close"]
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(short_price)
+                        tradebook["side"].append(-1)
+                        tradebook["traded_quantity"].append(quantity)
+                        running_pnl_points += short_price * -1
+                        running_pnl_rupees += short_price * -1 * quantity
+                        is_ce_position = True
+                        if not prev_prev_row.empty and "high" in prev_prev_row:
+                            ce_hard_sl = max(prev_row["high"], prev_prev_row["high"])
+                        else:
+                            ce_hard_sl = prev_row["high"]
+                        self.backtest_logger.logger.info(
+                            f"{curr_time} Entry : {ce_opt_symbol} px@{short_price}, vwap:{curr_vwap} qty:{quantity}"
+                        )
+
+                if curr_time >= self.strategy.start_time and not is_pe_position:
+                    if day_df.loc[idx, f"{pe_opt_symbol}_close"] < day_df.loc[idx, f"{pe_opt_symbol}_vwap"]:
+                        curr_vwap = day_df.loc[idx, f"{pe_opt_symbol}_vwap"]
+                        short_price = day_df.loc[idx, f"{pe_opt_symbol}_close"]
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(short_price)
+                        tradebook["side"].append(-1)
+                        tradebook["traded_quantity"].append(quantity)
+                        running_pnl_points += short_price * -1
+                        running_pnl_rupees += short_price * -1 * quantity
+                        is_pe_position = True
+                        if not prev_prev_row.empty and "high" in prev_prev_row:
+                            pe_hard_sl = max(prev_row["high"], prev_prev_row["high"])
+                        else:
+                            pe_hard_sl = prev_row["high"]
+                        self.backtest_logger.logger.info(
+                            f"{curr_time} Entry : {pe_opt_symbol} px@{short_price}, vwap:{curr_vwap} qty:{quantity}"
+                        )
+
+                if is_ce_position:
+                    # If candle high breaches Hard SL, exit
+                    if ce_hard_sl and day_df.loc[idx, f"{ce_opt_symbol}_high"] > ce_hard_sl:
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(ce_hard_sl)
+                        tradebook["side"].append(1)
+                        tradebook["traded_quantity"].append(quantity)
+                        running_pnl_points += ce_hard_sl * 1
+                        running_pnl_rupees += ce_hard_sl * 1 * quantity
+                        is_ce_position = False
+                        ce_hard_sl = None
+                        quantity = self.strategy.position_size
+                        self.backtest_logger.logger.info(
+                            f"{curr_time} HARD SL HIT : {ce_opt_symbol} px@{ce_hard_sl}, PNL: {running_pnl_rupees * -1}")
+
+                    # If close > vwap, exit
+                    if day_df.loc[idx, f"{ce_opt_symbol}_close"] > day_df.loc[idx, f"{ce_opt_symbol}_vwap"]:
+                        curr_vwap = day_df.loc[idx, f"{ce_opt_symbol}_vwap"]
+                        buy_price = day_df.loc[idx, f"{ce_opt_symbol}_close"]
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(buy_price)
+                        tradebook["side"].append(1)
+                        tradebook["traded_quantity"].append(quantity)
+                        running_pnl_points += buy_price * 1
+                        running_pnl_rupees += buy_price * 1 * quantity
+                        is_ce_position = False
+                        self.backtest_logger.logger.info(
+                            f"{curr_time} Exit : {ce_opt_symbol} px@{buy_price}, vwap: {curr_vwap}, qty: {quantity} PNL: {running_pnl_rupees * -1}")
+                        quantity = self.strategy.position_size
+
+                    if is_ce_position:
+                        # Check MTM in points stoploss
+                        curr_close_price = day_df.loc[idx, f"{ce_opt_symbol}_close"]
+                        curr_pnl_points = (curr_close_price * 1 + running_pnl_points) * -1
+                        if self.strategy.stoploss_mtm_points:
+                            if curr_pnl_points <= self.strategy.stoploss_mtm_points:
+                                tradebook["datetime"].append(day_df.loc[idx, "date"])
+                                tradebook["price"].append(curr_close_price)
+                                tradebook["side"].append(1)
+                                tradebook["traded_quantity"].append(quantity)
+                                self.backtest_logger.logger.info(
+                                    f"{curr_time} MTM POINT SL : px@{curr_close_price}, qty: {quantity}")
+                                break
+
+                        # Check MTM in rupees stoploss
+                        if self.strategy.stoploss_mtm_rupees:
+                            # Check if MTM SL hit at close
+                            curr_pnl_rupees = (curr_close_price * 1 * quantity + running_pnl_rupees) * -1
+                            if curr_pnl_rupees <= self.strategy.stoploss_mtm_rupees:
+                                self.backtest_logger.logger.info(
+                                    f"{curr_time}: MTM RUPEES SL HIT: CLOSEpx@{curr_close_price}, qty: {quantity} C.PNL: {curr_pnl_rupees}")
+                                tradebook["datetime"].append(day_df.loc[idx, "date"])
+                                tradebook["price"].append(curr_close_price)
+                                tradebook["side"].append(1)
+                                tradebook["traded_quantity"].append(quantity)
+                                running_pnl_points += curr_close_price * 1
+                                running_pnl_rupees += curr_close_price * 1 * quantity
+                                if is_pe_position:
+                                    buy_price = day_df.loc[idx, f"{pe_opt_symbol}_close"]
+                                    tradebook["datetime"].append(day_df.loc[idx, "date"])
+                                    tradebook["price"].append(buy_price)
+                                    tradebook["side"].append(1)
+                                    tradebook["traded_quantity"].append(quantity)
+                                    running_pnl_points += buy_price * 1
+                                    running_pnl_rupees += buy_price * 1 * quantity
+                                    self.backtest_logger.logger.info(
+                                        f"{curr_time} Exit: {pe_opt_symbol} MTM HIT px@{buy_price} qty:{quantity} PNL: {running_pnl_rupees * -1}"
+                                    )
+                                break
+
+                        # Close Half Quantity
+                        if self.strategy.close_half_on_mtm_rupees and not is_half_squared_off:
+                            curr_pnl_rupees = (curr_close_price * 1 * quantity + running_pnl_rupees) * -1
+                            if curr_pnl_rupees >= self.strategy.close_half_on_mtm_rupees:
+                                self.backtest_logger.logger.info(
+                                    f"{curr_time} Square off half Qty: px@{curr_close_price} qty: {quantity / 2}:"
+                                    f" C.PNL: {curr_pnl_rupees}"
+                                )
+                                tradebook["datetime"].append(day_df.loc[idx, "date"])
+                                tradebook["price"].append(curr_close_price)
+                                tradebook["side"].append(1)
+                                tradebook["traded_quantity"].append(quantity / 2)
+                                is_half_squared_off = True
+                                quantity = quantity / 2
+                                running_pnl_points += curr_close_price * 1
+                                running_pnl_rupees += curr_close_price * 1 * quantity
+
+                if is_pe_position:
+                    # If candle high breaches Hard SL, exit
+                    if pe_hard_sl and day_df.loc[idx, f"{pe_opt_symbol}_high"] > pe_hard_sl:
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(pe_hard_sl)
+                        tradebook["side"].append(1)
+                        tradebook["traded_quantity"].append(quantity)
+                        running_pnl_points += pe_hard_sl * 1
+                        running_pnl_rupees += pe_hard_sl * 1 * quantity
+                        is_pe_position = False
+                        pe_hard_sl = None
+                        self.backtest_logger.logger.info(
+                            f"{curr_time} HARD SL HIT : {pe_opt_symbol} px@{pe_hard_sl}, PNL: {running_pnl_rupees * -1}")
+                        quantity = self.strategy.position_size
+
+                    # If close > vwap, exit
+                    if day_df.loc[idx, f"{pe_opt_symbol}_close"] > day_df.loc[idx, f"{pe_opt_symbol}_vwap"]:
+                        curr_vwap = day_df.loc[idx, f"{pe_opt_symbol}_vwap"]
+                        buy_price = day_df.loc[idx, f"{pe_opt_symbol}_close"]
+                        tradebook["datetime"].append(day_df.loc[idx, "date"])
+                        tradebook["price"].append(buy_price)
+                        tradebook["side"].append(1)
+                        tradebook["traded_quantity"].append(quantity)
+                        running_pnl_points += buy_price * 1
+                        running_pnl_rupees += buy_price * 1 * quantity
+                        is_pe_position = False
+                        self.backtest_logger.logger.info(
+                            f"{curr_time} Exit : {pe_opt_symbol} px@{buy_price}, vwap: {curr_vwap}, qty: {quantity} PNL: {running_pnl_rupees * -1}")
+                        quantity = self.strategy.position_size
+
+                    if is_pe_position:
+                        # Check MTM in points stoploss
+                        curr_close_price = day_df.loc[idx, f"{pe_opt_symbol}_close"]
+                        curr_pnl_points = (curr_close_price * 1 + running_pnl_points) * -1
+                        if self.strategy.stoploss_mtm_points:
+                            if curr_pnl_points <= self.strategy.stoploss_mtm_points:
+                                tradebook["datetime"].append(day_df.loc[idx, "date"])
+                                tradebook["price"].append(curr_close_price)
+                                tradebook["side"].append(1)
+                                tradebook["traded_quantity"].append(quantity)
+                                self.backtest_logger.logger.info(
+                                    f"{curr_time} MTM POINT SL : px@{curr_close_price}, qty: {quantity}")
+                                break
+
+                        # Check MTM in rupees stoploss
+                        if self.strategy.stoploss_mtm_rupees:
+                            # Check if MTM SL hit at close
+                            curr_pnl_rupees = (curr_close_price * 1 * quantity + running_pnl_rupees) * -1
+                            if curr_pnl_rupees <= self.strategy.stoploss_mtm_rupees:
+                                self.backtest_logger.logger.info(
+                                    f"{curr_time}: MTM RUPEES SL HIT: CLOSEpx@{curr_close_price}, qty: {quantity} C.PNL: {curr_pnl_rupees}")
+                                tradebook["datetime"].append(day_df.loc[idx, "date"])
+                                tradebook["price"].append(curr_close_price)
+                                tradebook["side"].append(1)
+                                tradebook["traded_quantity"].append(quantity)
+                                running_pnl_points += curr_close_price * 1
+                                running_pnl_rupees += curr_close_price * 1 * quantity
+                                if is_ce_position:
+                                    buy_price = day_df.loc[idx, f"{ce_opt_symbol}_close"]
+                                    tradebook["datetime"].append(day_df.loc[idx, "date"])
+                                    tradebook["price"].append(buy_price)
+                                    tradebook["side"].append(1)
+                                    tradebook["traded_quantity"].append(quantity)
+                                    running_pnl_points += buy_price * 1
+                                    running_pnl_rupees += buy_price * 1 * quantity
+                                    self.backtest_logger.logger.info(
+                                        f"{curr_time} Exit: {ce_opt_symbol} MTM SL HIT px@{buy_price} qty:{quantity} PNL: {running_pnl_rupees * -1}"
+                                    )
+                                    total_trades += 1
+                                break
+
+                        # Close Half Quantity
+                        if self.strategy.close_half_on_mtm_rupees and not is_half_squared_off:
+                            curr_pnl_rupees = (curr_close_price * 1 * quantity + running_pnl_rupees) * -1
+                            if curr_pnl_rupees >= self.strategy.close_half_on_mtm_rupees:
+                                self.backtest_logger.logger.info(
+                                    f"{curr_time} Square off half Qty: px@{curr_close_price} qty: {quantity / 2}:"
+                                    f" C.PNL: {curr_pnl_rupees}"
+                                )
+                                tradebook["datetime"].append(day_df.loc[idx, "date"])
+                                tradebook["price"].append(curr_close_price)
+                                tradebook["side"].append(1)
+                                tradebook["traded_quantity"].append(quantity / 2)
+                                is_half_squared_off = True
+                                quantity = quantity / 2
+                                running_pnl_points += curr_close_price * 1
+                                running_pnl_rupees += curr_close_price * 1 * quantity
+
+                prev_prev_row = prev_row
+                prev_row = row
+            # running_pnl_points = 0
+            # running_pnl_rupees = 0
+            # quantity = self.strategy.position_size
+            # prev_row = pd.Series()
+            # prev_prev_row = pd.Series()
+            # is_pe_position = False
+            # for idx, row in day_df.iterrows():
+            #     curr_time = day_df.loc[idx, "date"].time()
+            #     if curr_time >= self.strategy.end_time:
+            #         if is_pe_position:
+            #             buy_price = day_df.loc[idx, f"{pe_opt_symbol}_close"]
+            #             tradebook["datetime"].append(day_df.loc[idx, "date"])
+            #             tradebook["price"].append(buy_price)
+            #             tradebook["side"].append(1)
+            #             tradebook["traded_quantity"].append(quantity)
+            #             running_pnl_points += buy_price * 1
+            #             running_pnl_rupees += buy_price * 1 * quantity
+            #             self.backtest_logger.logger.info(
+            #                 f"{curr_time} Exit: {pe_opt_symbol} End of trade px@{buy_price} qty:{quantity} PNL: {running_pnl_rupees * -1}"
+            #             )
+            #             total_trades += 1
+            #         break
+            #     if curr_time >= self.strategy.start_time and not is_pe_position:
+            #         if day_df.loc[idx, f"{pe_opt_symbol}_close"] < day_df.loc[idx, f"{pe_opt_symbol}_vwap"]:
+            #             curr_vwap = day_df.loc[idx, f"{pe_opt_symbol}_vwap"]
+            #             short_price = day_df.loc[idx, f"{pe_opt_symbol}_close"]
+            #             tradebook["datetime"].append(day_df.loc[idx, "date"])
+            #             tradebook["price"].append(short_price)
+            #             tradebook["side"].append(-1)
+            #             tradebook["traded_quantity"].append(quantity)
+            #             running_pnl_points += short_price * -1
+            #             running_pnl_rupees += short_price * -1 * quantity
+            #             is_pe_position = True
+            #             if not prev_prev_row.empty and "high" in prev_prev_row:
+            #                 pe_hard_sl = max(prev_row["high"], prev_prev_row["high"])
+            #             else:
+            #                 pe_hard_sl = prev_row["high"]
+            #             self.backtest_logger.logger.info(
+            #                 f"{curr_time} Entry : {pe_opt_symbol} px@{short_price}, vwap:{curr_vwap} qty:{quantity}"
+            #             )
+            #
+            #     if is_pe_position:
+            #         # If candle high breaches Hard SL, exit
+            #         if pe_hard_sl and day_df.loc[idx, f"{pe_opt_symbol}_high"] > pe_hard_sl:
+            #             tradebook["datetime"].append(day_df.loc[idx, "date"])
+            #             tradebook["price"].append(pe_hard_sl)
+            #             tradebook["side"].append(1)
+            #             tradebook["traded_quantity"].append(quantity)
+            #             running_pnl_points += pe_hard_sl * 1
+            #             running_pnl_rupees += pe_hard_sl * 1 * quantity
+            #             is_pe_position = False
+            #             pe_hard_sl = None
+            #             self.backtest_logger.logger.info(
+            #                 f"{curr_time} HARD SL HIT : {pe_opt_symbol} px@{pe_hard_sl}, PNL: {running_pnl_rupees * -1}")
+            #             quantity = self.strategy.position_size
+            #
+            #         # If close > vwap, exit
+            #         if day_df.loc[idx, f"{pe_opt_symbol}_close"] > day_df.loc[idx, f"{pe_opt_symbol}_vwap"]:
+            #             curr_vwap = day_df.loc[idx, f"{pe_opt_symbol}_vwap"]
+            #             buy_price = day_df.loc[idx, f"{pe_opt_symbol}_close"]
+            #             tradebook["datetime"].append(day_df.loc[idx, "date"])
+            #             tradebook["price"].append(buy_price)
+            #             tradebook["side"].append(1)
+            #             tradebook["traded_quantity"].append(quantity)
+            #             running_pnl_points += buy_price * 1
+            #             running_pnl_rupees += buy_price * 1 * quantity
+            #             is_pe_position = False
+            #             self.backtest_logger.logger.info(
+            #                 f"{curr_time} Exit : {pe_opt_symbol} px@{buy_price}, vwap: {curr_vwap}, qty: {quantity} PNL: {running_pnl_rupees * -1}")
+            #             quantity = self.strategy.position_size
+            #
+            #         if is_pe_position:
+            #             # Check MTM in points stoploss
+            #             curr_close_price = day_df.loc[idx, f"{pe_opt_symbol}_close"]
+            #             curr_pnl_points = (curr_close_price * 1 + running_pnl_points) * -1
+            #             if self.strategy.stoploss_mtm_points:
+            #                 if curr_pnl_points <= self.strategy.stoploss_mtm_points:
+            #                     tradebook["datetime"].append(day_df.loc[idx, "date"])
+            #                     tradebook["price"].append(curr_close_price)
+            #                     tradebook["side"].append(1)
+            #                     tradebook["traded_quantity"].append(quantity)
+            #                     self.backtest_logger.logger.info(
+            #                         f"{curr_time} MTM POINT SL : px@{curr_close_price}, qty: {quantity}")
+            #                     break
+            #
+            #             # Check MTM in rupees stoploss
+            #             if self.strategy.stoploss_mtm_rupees:
+            #                 # Check if MTM SL hit at close
+            #                 curr_pnl_rupees = (curr_close_price * 1 * quantity + running_pnl_rupees) * -1
+            #                 if curr_pnl_rupees <= self.strategy.stoploss_mtm_rupees:
+            #                     self.backtest_logger.logger.info(
+            #                         f"{curr_time}: MTM RUPEES SL HIT: CLOSEpx@{curr_close_price}, qty: {quantity} C.PNL: {curr_pnl_rupees}")
+            #                     tradebook["datetime"].append(day_df.loc[idx, "date"])
+            #                     tradebook["price"].append(curr_close_price)
+            #                     tradebook["side"].append(1)
+            #                     tradebook["traded_quantity"].append(quantity)
+            #                     break
+            #
+            #             # Close Half Quantity
+            #             if self.strategy.close_half_on_mtm_rupees and not is_half_squared_off:
+            #                 curr_pnl_rupees = (curr_close_price * 1 * quantity + running_pnl_rupees) * -1
+            #                 if curr_pnl_rupees >= self.strategy.close_half_on_mtm_rupees:
+            #                     self.backtest_logger.logger.info(
+            #                         f"{curr_time} Square off half Qty: px@{curr_close_price} qty: {quantity / 2}:"
+            #                         f" C.PNL: {curr_pnl_rupees}"
+            #                     )
+            #                     tradebook["datetime"].append(day_df.loc[idx, "date"])
+            #                     tradebook["price"].append(curr_close_price)
+            #                     tradebook["side"].append(1)
+            #                     tradebook["traded_quantity"].append(quantity / 2)
+            #                     is_half_squared_off = True
+            #                     quantity = quantity / 2
+            #                     running_pnl_points += curr_close_price * 1
+            #                     running_pnl_rupees += curr_close_price * 1 * quantity
+            #     prev_prev_row = prev_row
+            #     prev_row = row
         tradebook["unable_to_trade_days"] = unable_to_trade_days
         save_tradebook(tradebook, self.strategy.strat_name)
