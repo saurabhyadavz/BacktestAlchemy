@@ -41,8 +41,8 @@ def run_itm_vwap(start_date: str, end_date: str, strat_name: str, run_backtest: 
         print(f"Running {strat_name}")
         strategy = Strategy(strat_name=strat_name, start_date=start_date, end_date=end_date,
                             instrument="BANKNIFTY", capital=200000, lots=1, is_intraday=True,
-                            start_time="9:45", end_time="14:45", timeframe="30min", opt_timeframe="30min",
-                            stoploss_mtm_rupees=2000, expiry_week=0)
+                            start_time="9:25", end_time="14:30", timeframe="5min", opt_timeframe="5min",
+                            expiry_week=0, buffer=0)
         data = DataProducer(strategy.instrument, strategy.start_date, strategy.end_date, strategy.timeframe)
         bt = OptBacktest(strategy, data)
         bt.backtest_itm_vwap()
@@ -50,8 +50,52 @@ def run_itm_vwap(start_date: str, end_date: str, strat_name: str, run_backtest: 
               strat_name=strat_name, slippage=0.005)
 
 
+def run_anchored_vwap(start_date: str, end_date: str, strat_name: str, run_backtest: bool = True):
+    if run_backtest:
+        print(f"Running {strat_name}")
+        strategy = Strategy(strat_name=strat_name, start_date=start_date, end_date=end_date,
+                            instrument="BANKNIFTY", capital=200000, lots=1, is_intraday=True,
+                            start_time="9:25", end_time="15:25", timeframe="5min", opt_timeframe="5min",
+                            stoploss_mtm_rupees=2800, expiry_week=0, buffer=0)
+        data = DataProducer(strategy.instrument, strategy.start_date, strategy.end_date, strategy.timeframe)
+        bt = OptBacktest(strategy, data)
+        bt.backtest_atm_anchored_vwap()
+    Analyzers(capital=200000, instrument="BANKNIFTY", lots=1, start_date=start_date, end_date=end_date,
+              strat_name=strat_name, slippage=0.005)
+
+
+def run_atm_straddle_combined_tsl(start_date: str, end_date: str, strat_name: str, run_backtest: bool = True):
+    if run_backtest:
+        print(f"Running {strat_name}")
+        strategy = Strategy(strat_name=strat_name, start_date=start_date, end_date=end_date,
+                            instrument="BANKNIFTY", capital=200000, lots=1, is_intraday=True,
+                            start_time="9:18", end_time="15:24", timeframe="3min", opt_timeframe="3min"
+                            , expiry_week=0, buffer=0, is_trail_sl=True, tsl=(1, 1), stoploss_pct=0.1)
+        data = DataProducer(strategy.instrument, strategy.start_date, strategy.end_date, strategy.timeframe)
+        bt = OptBacktest(strategy, data)
+        bt.backtest_atm_combined_tsl()
+    Analyzers(capital=200000, instrument="BANKNIFTY", lots=1, start_date=start_date, end_date=end_date,
+              strat_name=strat_name, slippage=0.005)
+
+
+def run_atm_straddle_tsl(start_date: str, end_date: str, strat_name: str, run_backtest: bool = True):
+    if run_backtest:
+        print(f"Running {strat_name}")
+        strategy = Strategy(strat_name=strat_name, start_date=start_date, end_date=end_date,
+                            instrument="BANKNIFTY", capital=200000, lots=1, is_intraday=True,
+                            start_time="9:18", end_time="15:24", timeframe="3min", opt_timeframe="3min"
+                            ,expiry_week=0, buffer=0, is_trail_sl=True, tsl=(1, 1), stoploss_pct=0.2,
+                            re_execute_count=19)
+        data = DataProducer(strategy.instrument, strategy.start_date, strategy.end_date, strategy.timeframe)
+        bt = OptBacktest(strategy, data)
+        bt.backtest_atm_straddle_tsl()
+    Analyzers(capital=200000, instrument="BANKNIFTY", lots=1, start_date=start_date, end_date=end_date,
+              strat_name=strat_name, slippage=0.005)
+
+
 if __name__ == "__main__":
-    start_date = "2021-01-01"
-    end_date = "2021-12-31"
-    strat_name = "itm5_vwap"
-    run_itm_vwap(start_date=start_date, end_date=end_date, strat_name=f"{strat_name}_TF30MIN_500ITM", run_backtest=True)
+    start_date = "2022-01-03"
+    end_date = "2022-01-03"
+    strat_name = "CP_ATM_STRADDLE_INDIVIDUAL_TSL"
+    run_atm_straddle_tsl(start_date=start_date, end_date=end_date, strat_name=f"{strat_name}_BT1112",
+                         run_backtest=True)

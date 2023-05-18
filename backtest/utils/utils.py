@@ -21,6 +21,7 @@ NIFTY_MARGIN_REQUIRED = 130000
 NOTIONAL_VALUE_ASSUMED = 1000000
 BUY = "BUY"
 SELL = "SELL"
+INT_MAX = 1e18
 
 
 def string_to_datetime(date_string: str) -> datetime:
@@ -227,6 +228,7 @@ def get_combined_premium_df_from_trading_symbols(df: pd.DataFrame, trading_symbo
         trading_symbols(list[str]): iron condor info dictionary
         curr_date(datetime.date): current date
         timeframe(str): timeframe for resampling options df
+        is_outerjoin(bool): outer join or not
 
     Returns:
         tuple[bool, pd.DataFrame]: returns df merged with option symbol close price and option symbol
@@ -315,7 +317,7 @@ def save_tradebook(tradebook_dict: dict[str, typing.Any], strat_name: str):
     tradebook_df.to_csv(tradebook_file_path, index=False)
 
 
-def priority_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series) -> pd.Series:
+def get_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series, achored_time=None) -> pd.Series:
     """
     Returns vwap where priority is given to recent prices
     Args:
@@ -323,6 +325,7 @@ def priority_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.
         low(pd.Series): candle low series
         close(pd.Series): candle close series
         volume(pd.Series): candle volume series
+        achored_time: anchored time
 
     Returns:
         pd.Series: returns vwap series
@@ -336,21 +339,21 @@ def priority_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.
     df = pd.DataFrame(col)
     df["date"] = df.index
     df.reset_index(drop=True, inplace=True)
+    df["date"] = pd.to_datetime(df["date"])
     N = 5
     multiplier = 2 / (N + 1)
     df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
     df["cumm_vol_price"] = np.nan
     df["cumm_vol"] = np.nan
     for i in range(len(df)):
-        if i == 0:
+        if df.loc[i, "date"].time() == achored_time:
             df.loc[i, "cumm_vol_price"] = df.loc[i, "typical_price"] * df.loc[i, "volume"]
             df.loc[i, "cumm_vol"] = df.loc[i, "volume"]
-        else:
-            df.loc[i, "cumm_vol_price"] = (df.loc[i, "typical_price"] * df.loc[i, "volume"] * multiplier +
-                                           df.loc[i - 1, "cumm_vol_price"] * (1 - multiplier))
-            df.loc[i, "cumm_vol"] = df.loc[i, "volume"] * multiplier + df.loc[i - 1, "cumm_vol"] * (1 - multiplier)
+        elif df.loc[i, "date"].time() > achored_time:
+            df.loc[i, "cumm_vol_price"] = (df.loc[i, "typical_price"] * df.loc[i, "volume"] +
+                                           df.loc[i - 1, "cumm_vol_price"])
+            df.loc[i, "cumm_vol"] = df.loc[i, "volume"] + df.loc[i - 1, "cumm_vol"]
 
     df.set_index("date", inplace=True)
     vwap = df["cumm_vol_price"] / df["cumm_vol"]
     return vwap
-

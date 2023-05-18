@@ -201,6 +201,8 @@ class Analyzers:
         daily_returns_df.set_index("date", inplace=True)
         plt.figure(figsize=(15, 10))
         plt.fill_between(daily_returns_df.index, daily_returns_df["pnl_pct_cumulative"], color='green', alpha=0.5)
+        plt.fill_between(daily_returns_df.index, 0, daily_returns_df["pnl_pct_cumulative"],
+                         where=(daily_returns_df["pnl_pct_cumulative"] < 0), color='red', alpha=0.7)
 
         fmt = '%.0f%%'
         yticks = mtick.FormatStrFormatter(fmt)

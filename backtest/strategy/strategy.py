@@ -12,7 +12,8 @@ class Strategy:
                  timeframe: str = "1min", opt_timeframe: str = "1min", move_sl_to_cost: bool = False,
                  trading_days_before_expiry=None, how_far_otm_hedge_point: int = None,
                  how_far_otm_short_point: int = None, expiry_week: int = 0, stoploss_pct: float = None,
-                 buffer: float = 0, close_half_on_mtm_rupees: int = None):
+                 buffer: float = 0, close_half_on_mtm_rupees: int = None,
+                 is_trail_sl: bool = False, tsl: tuple[float, float] = None):
         self.strat_name = strat_name
         self.start_date = start_date
         self.end_date = end_date
@@ -38,6 +39,8 @@ class Strategy:
         self.lots = lots
         self.position_size = get_instrument_lot_size(instrument) * lots
         self.buffer = buffer
+        self.is_trail_sl = is_trail_sl
+        self.tsl = tsl
         self.close_half_on_mtm_rupees = close_half_on_mtm_rupees
         self.create_strat_dir()
 
