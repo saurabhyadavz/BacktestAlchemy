@@ -3,11 +3,11 @@ import pandas as pd
 import os
 from backtest.degen_logger.degen_logger import DegenLogger
 from backtest.strategy.strategy import Strategy
-from backtest.data.data import DataProducer
+from backtest.data.data import DataProducer, CandleData, resample_ohlc_df
 from backtest.utils import utils
 import pandas_ta as ta
 from datetime import datetime, date, timedelta
-from backtest.utils.utils import save_tradebook
+from backtest.utils.utils import save_tradebook, BUY, SELL, OPTION_TYPE_CE, OPTION_TYPE_PE
 
 
 class OptBacktest:
@@ -937,7 +937,7 @@ class OptBacktest:
         tradebook["unable_to_trade_days"] = unable_to_trade_days
         save_tradebook(tradebook, self.strategy.strat_name)
 
-    def backtest_atm_straddle_tsl(self):
+    def backtest_atm_straddle_rolling_tsl(self):
         df = self.data.resampled_historical_df
         df["day"] = df["date"].dt.date
         tradebook = {'datetime': [], 'price': [], 'side': [], 'traded_quantity': [],
@@ -946,7 +946,6 @@ class OptBacktest:
         day_groups = df.groupby("day")
         unable_to_trade_days = 0
         for day, day_df in day_groups:
-            # Getting expiry
             curr_week_expiry_dt = self.data.get_closet_expiry(self.strategy.instrument, day,
                                                               week_number=self.strategy.expiry_week)
             expiry_comp = self.data.get_expiry_comp_from_date(self.strategy.instrument, curr_week_expiry_dt)
@@ -961,7 +960,7 @@ class OptBacktest:
                                                                        self.strategy.opt_timeframe)
 
             if is_symbol_missing:
-                with open(os.path.join(os.getcwd(), self.strategy.strat_name, "missing_symbols.txt"), "w") as f:
+                with open(os.path.join(os.getcwd(), self.strategy.strat_name, "missing_symbols.txt"), "a") as f:
                     f.write(f"{day}\n")
                 unable_to_trade_days += 1
                 continue
@@ -980,128 +979,197 @@ class OptBacktest:
             start_time = self.strategy.start_time
             end_time = self.strategy.end_time
             re_execute_count = 0
+            is_symbol_missing_inside = False
             for idx, row in day_df.iterrows():
-                curr_time = day_df.loc[idx, "date"].time()
-                if curr_time < start_time:
+                ce_candle = CandleData(candle_series=day_df.loc[idx], symbol=ce_opt_symbol)
+                pe_candle = CandleData(candle_series=day_df.loc[idx], symbol=pe_opt_symbol)
+                if ce_candle.time < start_time:
                     continue
-                curr_ce_close_px = day_df.loc[idx, f"{ce_opt_symbol}_close"]
-                curr_pe_close_px = day_df.loc[idx, f"{pe_opt_symbol}_close"]
-                if curr_time >= end_time and is_position:
-                    tradebook["datetime"].append(day_df.loc[idx, "date"])
-                    tradebook["price"].append(curr_ce_close_px)
-                    tradebook["side"].append(1)
-                    tradebook["traded_quantity"].append(quantity)
-                    running_pnl_points += curr_ce_close_px * 1
-                    running_pnl_rupees += curr_ce_close_px * 1 * quantity
+                if ce_candle.time >= end_time and is_position:
+                    tradebook, running_pnl_points, running_pnl_rupees = utils.add_trade(tradebook, running_pnl_points,
+                                                                                        running_pnl_rupees,
+                                                                                        ce_candle.date, ce_candle.close,
+                                                                                        BUY, quantity)
+                    tradebook, running_pnl_points, running_pnl_rupees = utils.add_trade(tradebook, running_pnl_points,
+                                                                                        running_pnl_rupees,
+                                                                                        pe_candle.date, pe_candle.close,
+                                                                                        BUY, quantity)
                     self.backtest_logger.logger.info(
-                        f"{curr_time} Exit: {ce_opt_symbol} End of trade px@{curr_ce_close_px} qty:{quantity} PNL: {running_pnl_rupees * -1}"
-                    )
-                    total_trades += 1
-                    tradebook["datetime"].append(day_df.loc[idx, "date"])
-                    tradebook["price"].append(curr_pe_close_px)
-                    tradebook["side"].append(1)
-                    tradebook["traded_quantity"].append(quantity)
-                    running_pnl_points += curr_pe_close_px * 1
-                    running_pnl_rupees += curr_pe_close_px * 1 * quantity
+                        f"{ce_candle.time} Exit: {ce_opt_symbol} End of trade px@{ce_candle.close} qty:{quantity} PNL: {running_pnl_rupees * -1}")
                     self.backtest_logger.logger.info(
-                        f"{curr_time} Exit: {pe_opt_symbol} End of trade px@{curr_pe_close_px} qty:{quantity} PNL: {running_pnl_rupees * -1}"
-                    )
-                    total_trades += 1
+                        f"{ce_candle.time} Exit: {pe_opt_symbol} End of trade px@{pe_candle.close} qty:{quantity} PNL: {running_pnl_rupees * -1}")
+                    total_trades += 2
                     break
-                if curr_time >= start_time and not is_position:
-                    tradebook["datetime"].append(day_df.loc[idx, "date"])
-                    tradebook["price"].append(curr_pe_close_px)
-                    tradebook["side"].append(-1)
-                    tradebook["traded_quantity"].append(quantity)
-                    running_pnl_points += curr_pe_close_px * -1
-                    running_pnl_rupees += curr_pe_close_px * -1 * quantity
+                if ce_candle.time >= start_time and not is_position:
+                    tradebook, running_pnl_points, running_pnl_rupees = utils.add_trade(tradebook, running_pnl_points,
+                                                                                        running_pnl_rupees,
+                                                                                        ce_candle.date, ce_candle.close,
+                                                                                        SELL, quantity)
+                    tradebook, running_pnl_points, running_pnl_rupees = utils.add_trade(tradebook, running_pnl_points,
+                                                                                        running_pnl_rupees,
+                                                                                        pe_candle.date, pe_candle.close,
+                                                                                        SELL, quantity)
                     self.backtest_logger.logger.info(
-                        f"{curr_time} Entry : {pe_opt_symbol} px@{curr_pe_close_px}, qty:{quantity}"
-                    )
-                    tradebook["datetime"].append(day_df.loc[idx, "date"])
-                    tradebook["price"].append(curr_ce_close_px)
-                    tradebook["side"].append(-1)
-                    tradebook["traded_quantity"].append(quantity)
-                    running_pnl_points += curr_ce_close_px * -1
-                    running_pnl_rupees += curr_ce_close_px * -1 * quantity
+                        f"{ce_candle.time} Entry : {ce_opt_symbol} px@{ce_candle.close}, qty:{quantity}")
                     self.backtest_logger.logger.info(
-                        f"{curr_time} Entry : {ce_opt_symbol} px@{curr_ce_close_px},qty:{quantity}"
-                    )
+                        f"{ce_candle.time} Entry : {pe_opt_symbol} px@{pe_candle.close}, qty:{quantity}")
                     is_position = True
-                    ce_stoploss = curr_ce_close_px * (1 + self.strategy.stoploss_pct)
-                    pe_stoploss = curr_pe_close_px * (1 + self.strategy.stoploss_pct)
+                    ce_stoploss = ce_candle.close * (1 + self.strategy.stoploss_pct)
+                    pe_stoploss = pe_candle.close * (1 + self.strategy.stoploss_pct)
 
                 if is_position:
-                    if curr_ce_close_px > ce_stoploss:
-                        tradebook["datetime"].append(day_df.loc[idx, "date"])
-                        tradebook["price"].append(ce_stoploss)
-                        tradebook["side"].append(1)
-                        tradebook["traded_quantity"].append(quantity)
-                        running_pnl_points += ce_stoploss * 1
-                        running_pnl_rupees += ce_stoploss * 1 * quantity
+                    if ce_candle.close > ce_stoploss:
+                        tradebook, running_pnl_points, running_pnl_rupees = utils.add_trade(tradebook,
+                                                                                            running_pnl_points,
+                                                                                            running_pnl_rupees,
+                                                                                            ce_candle.date,
+                                                                                            ce_candle.close,
+                                                                                            BUY, quantity)
+                        tradebook, running_pnl_points, running_pnl_rupees = utils.add_trade(tradebook,
+                                                                                            running_pnl_points,
+                                                                                            running_pnl_rupees,
+                                                                                            ce_candle.date,
+                                                                                            pe_candle.close, BUY,
+                                                                                            quantity)
                         self.backtest_logger.logger.info(
-                            f"{curr_time} Exit SL HIT {ce_opt_symbol}: px@{ce_stoploss}, qty: {quantity}")
-                        tradebook["datetime"].append(day_df.loc[idx, "date"])
-                        tradebook["price"].append(curr_pe_close_px)
-                        tradebook["side"].append(1)
-                        tradebook["traded_quantity"].append(quantity)
+                            f"{ce_candle.time} Exiting:[SL HIT] {ce_opt_symbol}: px@{ce_candle.close}, qty: {quantity}")
                         self.backtest_logger.logger.info(
-                            f"{curr_time} Exit {pe_opt_symbol}: px@{curr_pe_close_px}, qty: {quantity} ")
-                        is_position = False
-                        prev_ce_close_px = utils.INT_MAX
-                        prev_pe_close_px = utils.INT_MAX
-                        ce_stoploss = None
-                        pe_stoploss = None
-                        delta = timedelta(minutes=6)
-                        start_time = (datetime.combine(date.today(), curr_time) + delta).time()
-                        re_execute_count += 1
-                        if re_execute_count >= self.strategy.re_execute_count:
-                            break
-                        continue
-
-                    if curr_pe_close_px > pe_stoploss:
-                        tradebook["datetime"].append(day_df.loc[idx, "date"])
-                        tradebook["price"].append(pe_stoploss)
-                        tradebook["side"].append(1)
-                        tradebook["traded_quantity"].append(quantity)
-                        running_pnl_points += pe_stoploss * 1
-                        running_pnl_rupees += pe_stoploss * 1 * quantity
-                        self.backtest_logger.logger.info(
-                            f"{curr_time} Exit SL HIT {pe_opt_symbol}: px@{pe_stoploss}, qty: {quantity} ")
-                        tradebook["datetime"].append(day_df.loc[idx, "date"])
-                        tradebook["price"].append(curr_ce_close_px)
-                        tradebook["side"].append(1)
-                        tradebook["traded_quantity"].append(quantity)
-                        self.backtest_logger.logger.info(
-                            f"{curr_time} Exit {ce_opt_symbol}: px@{curr_ce_close_px}, qty: {quantity} ")
+                            f"{ce_candle.time} Exiting {pe_opt_symbol}: px@{pe_candle.close}, qty: {quantity} ")
                         is_position = False
                         prev_ce_close_px = MAXX
                         prev_pe_close_px = MAXX
                         ce_stoploss = None
                         pe_stoploss = None
-                        delta = timedelta(minutes=6)
-                        start_time = (datetime.combine(date.today(), curr_time) + delta).time()
+                        ce_opt_symbol = utils.get_opt_symbol(self.strategy.instrument, expiry_comp, ce_candle.atm,
+                                                             OPTION_TYPE_PE)
+                        pe_opt_symbol = utils.get_opt_symbol(self.strategy.instrument, expiry_comp, pe_candle.atm,
+                                                             OPTION_TYPE_CE)
+                        opt_symbols = [ce_opt_symbol, pe_opt_symbol]
+                        is_symbol_missing, day_df = utils.get_merged_opt_symbol_df(day_df, opt_symbols, day,
+                                                                                   self.strategy.opt_timeframe)
+                        if is_symbol_missing:
+                            is_symbol_missing_inside = True
+                            break
+                        delta = timedelta(minutes=0)
+                        start_time = (datetime.combine(date.today(), ce_candle.time) + delta).time()
+                        re_execute_count += 1
+                        if re_execute_count >= self.strategy.re_execute_count:
+                            break
+                        continue
+
+                    if pe_candle.close > pe_stoploss:
+                        tradebook, running_pnl_points, running_pnl_rupees = utils.add_trade(tradebook,
+                                                                                            running_pnl_points,
+                                                                                            running_pnl_rupees,
+                                                                                            ce_candle.date,
+                                                                                            pe_candle.close,
+                                                                                            BUY, quantity)
+                        tradebook, running_pnl_points, running_pnl_rupees = utils.add_trade(tradebook,
+                                                                                            running_pnl_points,
+                                                                                            running_pnl_rupees,
+                                                                                            ce_candle.date,
+                                                                                            ce_candle.close, BUY,
+                                                                                            quantity)
+                        self.backtest_logger.logger.info(
+                            f"{ce_candle.time} Exiting:[SL HIT] {pe_opt_symbol}: px@{pe_candle.close}, qty: {quantity} ")
+                        self.backtest_logger.logger.info(
+                            f"{ce_candle.time} Exit {ce_opt_symbol}: px@{ce_candle.close}, qty: {quantity} ")
+                        is_position = False
+                        prev_ce_close_px = MAXX
+                        prev_pe_close_px = MAXX
+                        ce_stoploss = None
+                        pe_stoploss = None
+                        ce_opt_symbol = utils.get_opt_symbol(self.strategy.instrument, expiry_comp, ce_candle.atm,
+                                                             OPTION_TYPE_PE)
+                        pe_opt_symbol = utils.get_opt_symbol(self.strategy.instrument, expiry_comp, pe_candle.atm,
+                                                             OPTION_TYPE_CE)
+                        opt_symbols = [ce_opt_symbol, pe_opt_symbol]
+                        is_symbol_missing, day_df = utils.get_merged_opt_symbol_df(day_df, opt_symbols, day,
+                                                                                   self.strategy.opt_timeframe)
+                        if is_symbol_missing:
+                            is_symbol_missing_inside = True
+                            break
+                        delta = timedelta(minutes=0)
+                        start_time = (datetime.combine(date.today(), ce_candle.time) + delta).time()
                         re_execute_count += 1
                         if re_execute_count >= self.strategy.re_execute_count:
                             break
                         continue
 
                     if is_position and self.strategy.is_trail_sl and prev_ce_close_px != MAXX:
-                        diff = prev_ce_close_px - curr_ce_close_px
+                        diff = prev_ce_close_px - ce_candle.close
                         if diff >= self.strategy.tsl[0]:
                             ce_stoploss -= diff
                             self.backtest_logger.logger.info(
-                                f"{curr_time}: {ce_opt_symbol} curr_close:{curr_ce_close_px} prev_close: {prev_ce_close_px} SL TRAILED from {ce_stoploss + diff} to {ce_stoploss}")
+                                f"{ce_candle.time}: {ce_opt_symbol} curr_close:{ce_candle.close} prev_close: {prev_ce_close_px} SL TRAILED from {ce_stoploss + diff} to {ce_stoploss}")
 
                     if is_position and self.strategy.is_trail_sl and prev_pe_close_px != MAXX:
-                        diff = prev_pe_close_px - curr_pe_close_px
+                        diff = prev_pe_close_px - pe_candle.close
                         if diff >= self.strategy.tsl[0]:
                             pe_stoploss -= diff
                             self.backtest_logger.logger.info(
-                                f"{curr_time}:{pe_opt_symbol} curr_close:{curr_pe_close_px} prv_close: {prev_pe_close_px} SL TRAILED from {pe_stoploss + diff} to {pe_stoploss}")
+                                f"{ce_candle.time}:{pe_opt_symbol} curr_close:{pe_candle.close} prv_close: {prev_pe_close_px} SL TRAILED from {pe_stoploss + diff} to {pe_stoploss}")
 
-                prev_ce_close_px = min(prev_ce_close_px, curr_ce_close_px)
-                prev_pe_close_px = min(prev_pe_close_px, curr_pe_close_px)
+                prev_ce_close_px = min(prev_ce_close_px, ce_candle.close)
+                prev_pe_close_px = min(prev_pe_close_px, pe_candle.close)
+
+            if is_symbol_missing_inside:
+                with open(os.path.join(os.getcwd(), self.strategy.strat_name, "missing_symbols.txt"), "a") as f:
+                    f.write(f"{day}\n")
+                unable_to_trade_days += 1
+                utils.remove_trades(tradebook, day)
+
+        tradebook["unable_to_trade_days"] = unable_to_trade_days
+        save_tradebook(tradebook, self.strategy.strat_name)
+
+    def backtest_atr_buying(self):
+        df = self.data.resampled_historical_df
+        daily_atr_df = resample_ohlc_df(df, "D")
+        daily_atr_df["date"] = daily_atr_df["date"].dt.date
+        daily_atr_df["atr"] = ta.atr(high=daily_atr_df["high"], low=daily_atr_df["low"],
+                                     close=daily_atr_df["close"], length=14)
+        daily_atr_df.set_index("date", inplace=True)
+        df["day"] = df["date"].dt.date
+        tradebook = {'datetime': [], 'price': [], 'side': [], 'traded_quantity': [],
+                     "is_intraday": self.strategy.is_intraday, "unable_to_trade_days": 0}
+        day_groups = df.groupby("day")
+        unable_to_trade_days = 0
+        prev_day = None
+        for day, day_df in day_groups:
+            curr_week_expiry_dt = self.data.get_closet_expiry(self.strategy.instrument, day,
+                                                              week_number=self.strategy.expiry_week)
+            expiry_comp = self.data.get_expiry_comp_from_date(self.strategy.instrument, curr_week_expiry_dt)
+            if prev_day is None or daily_atr_df.loc[day].empty or daily_atr_df.loc[day].isnull().values.any():
+                prev_day = day
+                continue
+            else:
+                prev_day = day
+                prev_14day_atr = daily_atr_df.loc[day, "atr"]
+            day_df.set_index("date", inplace=True)
+            day_df = day_df.reset_index()
+            running_pnl_points = 0
+            running_pnl_rupees = 0
+            total_trades = 0
+            quantity = self.strategy.position_size
+            start_time = self.strategy.start_time
+            end_time = self.strategy.end_time
+            re_execute_count = 0
+            spot_day_high = utils.INT_MIN
+            spot_day_low = utils.INT_MAX
+            is_ce_position = False
+            is_pe_position = False
+            for idx, row in day_df.iterrows():
+                spot_candle = CandleData(row)
+                if spot_day_high != utils.INT_MIN:
+                    diff = spot_day_high - day_df.loc[idx, "close"]
+                    atr_percentage = 1.1 * prev_14day_atr
+                    if diff > atr_percentage and not is_pe_position:
+                        ce_opt_symbol = utils.get_opt_symbol(self.strategy.instrument, expiry_comp,
+                                                             spot_candle.atm, OPTION_TYPE_PE)
+                        is_symbol_missing, day_df = utils.get_merged_opt_symbol_df(day_df, [ce_opt_symbol], day,
+                                                                                   self.strategy.opt_timeframe)
+                spot_day_high = max(spot_day_high, day_df.loc[idx, "high"])
+                spot_day_low = min(spot_day_low, day_df.loc[idx, "low"])
 
         tradebook["unable_to_trade_days"] = unable_to_trade_days
         save_tradebook(tradebook, self.strategy.strat_name)

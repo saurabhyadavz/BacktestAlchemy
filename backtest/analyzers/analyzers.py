@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -53,6 +54,7 @@ class Analyzers:
         self.slippage = slippage
         self.strat_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), strat_name)
         self.metrics_path = os.path.join(self.strat_dir, "metrics.csv")
+        self.daily_summary_path = os.path.join(self.strat_dir, "daily_summary.csv")
         self.tradebook_path = os.path.join(self.strat_dir, f"{self.strat_name}_tradebook.csv")
         self.tradebook_df = pd.read_csv(self.tradebook_path)
         self.unable_to_trade_days = 0
@@ -63,6 +65,7 @@ class Analyzers:
         self.plot_pnl_curve()
         self.plot_drawdown_curve()
         self.plot_monthly_heatmap(figsize=(8, 5))
+        self.calculate_daily_summary()
         self.prepare_pdf_report()
 
     def get_daily_returns(self):
@@ -100,7 +103,6 @@ class Analyzers:
         monthly_returns = df.groupby(['year', 'month'])['pnl_pct'].sum().reset_index()
         monthly_returns['month_name'] = monthly_returns['month'].apply(lambda x: calendar.month_abbr[x])
         month_order = [calendar.month_abbr[i] for i in range(1, 13)]
-        print(month_order)
         monthly_returns['month_name'] = pd.Categorical(monthly_returns['month_name'], categories=month_order,
                                                        ordered=True)
         monthly_returns.sort_values(['year', 'month_name'], inplace=True)
@@ -339,7 +341,9 @@ class Analyzers:
         OA_adj_pnl = (win_pnl - max_win)
         avg_pnl_on_winning_days = np.mean(day_points_df[day_points_df['pnl'] > 0]['pnl'])
         avg_pnl_on_losing_days = np.mean(day_points_df[day_points_df['pnl'] < 0]['pnl'])
-        avg_pnl_winning_days_oa_adj = round(OA_adj_pnl / total_wins, 1)
+        avg_pnl_winning_days_oa_adj = "NA"
+        if total_wins != 0:
+            avg_pnl_winning_days_oa_adj = round(OA_adj_pnl / total_wins, 1)
         risk_to_reward = round(abs(avg_pnl_on_winning_days / avg_pnl_on_losing_days), 2)
         profit_factor = round(abs(win_pnl / loss_pnl), 2)
         outlier_adjusted_profit_factor = round(abs(OA_adj_pnl / loss_pnl), 2)
@@ -354,11 +358,15 @@ class Analyzers:
         max_win_day = day_points_df[day_points_df['pnl'] == max_win].index[0]
 
         # Calculate sharpe ratio
-        sharpe = (np.sqrt(252) * mean_pnl) / np.std(day_points_df['pnl'])
+        sharpe = "NA"
+        if np.std(day_points_df['pnl']) != 0:
+            sharpe = (np.sqrt(252) * mean_pnl) / np.std(day_points_df['pnl'])
 
         # Calculate sortino ratio
         down_dev = np.where(day_points_df['pnl'] < 0, day_points_df['pnl'], 0).std()
-        sortino = (np.sqrt(252) * mean_pnl) / down_dev
+        sortino = "NA"
+        if down_dev != 0:
+            sortino = (np.sqrt(252) * mean_pnl) / down_dev
 
         # Calculate average monthly ROI
         monthly_returns = day_points_df['pnl'].resample('M').sum()
@@ -368,9 +376,9 @@ class Analyzers:
                                         'Traded with Lots', 'Total Trading days', 'Win days', 'Loss Days',
                                         'Win Rate (%)', 'Avg Profit on Profit Days Outlier Adjusted (Rs)',
                                         'Avg Profit on Profit Days (Rs)', 'Avg Loss on Loss Days (Rs)',
-                                        'Average Monthly ROI (%)', 'Total Profit (Rs)','Total Profit (%)',
+                                        'Average Monthly ROI (%)', 'Total Profit (Rs)', 'Total Profit (%)',
                                         'Max Profit (Rs)', 'Max Loss (Rs)', 'Max Winning Day', 'Max Losing Day',
-                                        'Max Drawdown (Rs)','Max Drawdown (%)', 'Risk to reward', 'Profit Factor',
+                                        'Max Drawdown (Rs)', 'Max Drawdown (%)', 'Risk to reward', 'Profit Factor',
                                         'Outlier Adjusted Profit Factor', 'Expectancy', 'Calmar',
                                         'Sharpe Ratio (Annualised)', 'Sortino Ratio (Annualised)',
                                         'Unable to trade days'])
@@ -387,12 +395,12 @@ class Analyzers:
             'Win days': total_wins,
             'Loss Days': total_losses,
             'Win Rate (%)': round(win_rate * 100, 2),
-            'Avg Profit on Profit Days Outlier Adjusted (Rs)': round(avg_pnl_winning_days_oa_adj, 2),
+            'Avg Profit on Profit Days Outlier Adjusted (Rs)': round(avg_pnl_winning_days_oa_adj, 2) if avg_pnl_winning_days_oa_adj != "NA" else avg_pnl_winning_days_oa_adj,
             'Avg Profit on Profit Days (Rs)': round(avg_pnl_on_winning_days, 2),
             'Avg Loss on Loss Days (Rs)': round(avg_pnl_on_losing_days, 2),
             'Average Monthly ROI (%)': round(average_monthly_roi, 2),
             'Total Profit (Rs)': round(total_pnl, 2),
-            'Total Profit (%)' : round((total_pnl/self.capital) * 100, 2),
+            'Total Profit (%)': round((total_pnl / self.capital) * 100, 2),
             'Max Profit (Rs)': round(max_win, 2),
             'Max Loss (Rs)': round(max_loss, 2),
             'Max Winning Day': max_win_day.date(),
@@ -404,15 +412,15 @@ class Analyzers:
             'Outlier Adjusted Profit Factor': outlier_adjusted_profit_factor,
             'Expectancy': round(expectancy, 2),
             'Calmar': round(calmar, 2),
-            'Sharpe Ratio (Annualised)': round(sharpe, 2),
-            'Sortino Ratio (Annualised)': round(sortino, 2),
+            'Sharpe Ratio (Annualised)': round(sharpe, 2) if sharpe != "NA" else sharpe,
+            'Sortino Ratio (Annualised)': round(sortino, 2) if sortino != "NA" else sortino,
             'Unable to trade days': self.unable_to_trade_days}, index=[0])], ignore_index=True)
         metrics.reset_index(drop=True, inplace=True)
         metrics = metrics.set_index('Test Start Date').T
         metrics.to_csv(self.metrics_path, index_label='Test Start Date')
 
     def prepare_pdf_report(self):
-
+        """Prepares PDF report"""
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=16)
@@ -452,29 +460,73 @@ class Analyzers:
                     pdf.cell(col_width + 20, row_height, str(item), border=1)
                 pdf.ln(row_height)
         pdf.add_page()
+        try:
+            with open(os.path.join(self.strat_dir, "worst_10_drawdowns.csv"), "r") as csv_file:
+                reader = csv.reader(csv_file)
+                data = []
+                for row in reader:
+                    data.append(row)
+                title_width = pdf.get_string_width("Worst 10 Drawdowns")
+                x_pos = (pdf.w - title_width) / 2
+                pdf.set_font("Arial", size=12)
+                pdf.set_xy(x_pos, 5)
+                pdf.cell(title_width, 10, "Worst 10 Drawdowns", 0, 2, "C")
 
-        with open(os.path.join(self.strat_dir, "worst_10_drawdowns.csv"), "r") as csv_file:
-            reader = csv.reader(csv_file)
-            data = []
-            for row in reader:
-                data.append(row)
-            title_width = pdf.get_string_width("Worst 10 Drawdowns")
-            x_pos = (pdf.w - title_width) / 2
-            pdf.set_font("Arial", size=12)
-            pdf.set_xy(x_pos, 5)
-            pdf.cell(title_width, 10, "Worst 10 Drawdowns", 0, 2, "C")
+                pdf.set_font("Arial", size=10)
 
-            pdf.set_font("Arial", size=10)
+                col_width = pdf.w / 4
+                row_height = 10
 
-            col_width = pdf.w / 4
-            row_height = 10
-
-            for row in data:
-                pdf.set_x(col_width / 2)
-                for item in row:
-                    pdf.cell(40, row_height, str(item), border=1)
-                pdf.ln(row_height)
-
-        pdf.image(os.path.join(self.strat_dir, "monthly_returns.png"), x=4, y=130, w=(pdf.w - 10))
+                for row in data:
+                    pdf.set_x(col_width / 2)
+                    for item in row:
+                        pdf.cell(40, row_height, str(item), border=1)
+                    pdf.ln(row_height)
+        except Exception as e:
+            pass
+        try:
+            with open(os.path.join(self.strat_dir, "daily_summary.csv"), "r") as summary_file:
+                reader = csv.reader(summary_file)
+                data = []
+                for row in reader:
+                    data.append(row)
+                daily_summary_width = pdf.get_string_width("Daily Summary")
+                x_pos = (pdf.w - daily_summary_width) / 2
+                pdf.set_font("Arial", size=12)
+                pdf.set_xy(x_pos, 130)
+                pdf.cell(daily_summary_width, 10, "Daily Summary", 0, 2, "C")
+                pdf.set_font("Arial", size=10)
+                col_width = pdf.w / 5
+                row_height = 8
+                for row in data:
+                    pdf.set_x(col_width)
+                    for item in row:
+                        pdf.cell(25, row_height, str(item), border=1)
+                    pdf.ln(row_height)
+        except Exception:
+            pass
+        pdf.add_page()
+        pdf.image(os.path.join(self.strat_dir, "monthly_returns.png"), x=4, y=30, w=(pdf.w - 10))
 
         pdf.output(os.path.join(self.strat_dir, f"{self.strat_name.lower()}_report.pdf"))
+
+    def calculate_daily_summary(self):
+        df = self.daily_returns.copy()
+        df['day'] = df['date'].dt.strftime('%A')
+        daily_summary_df = pd.DataFrame(columns=["Day", "Returns (%)", "Max profit(%)", "Max loss(%)", "Total trades"])
+        df_grp = df.groupby("day")
+        for day, day_df in df_grp:
+            max_profit = round(day_df["pnl_pct"].max(), 2)
+            max_loss = round(day_df["pnl_pct"].min(), 2)
+            total_return = round(day_df["pnl_pct"].sum(), 2)
+            total_trades = day_df["total trade"].sum()
+            daily_summary_df = pd.concat([daily_summary_df, pd.DataFrame({"Day": [day], "Returns (%)": [total_return],
+                                                                          "Max profit(%)": [max_profit],
+                                                                          "Max loss(%)": [max_loss],
+                                                                          "Total trades": [total_trades]})],
+                                         ignore_index=True)
+        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+        daily_summary_df['Day'] = pd.Categorical(daily_summary_df['Day'], categories=day_order, ordered=True)
+        daily_summary_df = daily_summary_df.sort_values('Day')
+        daily_summary_df.to_csv(self.daily_summary_path, index=False)
+        print("PDF REPORT GENERATED!!")

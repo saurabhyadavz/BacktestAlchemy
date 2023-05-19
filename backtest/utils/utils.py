@@ -21,7 +21,10 @@ NIFTY_MARGIN_REQUIRED = 130000
 NOTIONAL_VALUE_ASSUMED = 1000000
 BUY = "BUY"
 SELL = "SELL"
+OPTION_TYPE_CE = "CE"
+OPTION_TYPE_PE = "PE"
 INT_MAX = 1e18
+INT_MIN = -1e18
 
 
 def string_to_datetime(date_string: str) -> datetime:
@@ -357,3 +360,49 @@ def get_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Serie
     df.set_index("date", inplace=True)
     vwap = df["cumm_vol_price"] / df["cumm_vol"]
     return vwap
+
+
+def add_trade(tradebook: dict[str, typing.Any], running_pnl_points: float,
+              running_pnl_rupees: float, curr_dt: pd.Timestamp, price: float, side: str,
+              quantity: int) -> tuple[dict[str, typing.Any], float, float]:
+    """
+    Add trade to tradebook
+    Args:
+        tradebook(dict[str, typing.Any]): tradebook
+        running_pnl_points(float): running pnl in points
+        running_pnl_rupees(float): running pnl in rupees
+        curr_dt(pd.Timestamp): given date
+        price(float): price
+        side(str): side(BUY/SELL)
+        quantity(int): traded quantity
+
+    Returns:
+        dict[str, typing.Any]: returns tradebook dictionary
+    """
+    if side == BUY:
+        side = 1
+    else:
+        side = -1
+    tradebook["datetime"].append(curr_dt)
+    tradebook["price"].append(price)
+    tradebook["side"].append(side)
+    tradebook["traded_quantity"].append(quantity)
+    running_pnl_points += price * side
+    running_pnl_rupees += price * side * quantity
+    return tradebook, running_pnl_points, running_pnl_rupees
+
+
+def remove_trades(tradebook: dict[str, typing.Any], date_to_remove) -> dict[str, typing.Any]:
+    """
+    Add trade to tradebook
+    Args:
+        tradebook(dict[str, typing.Any]): tradebook
+        dt: remove rows where date is dt
+
+    Returns:
+        dict[str, typing.Any]: returns tradebook dictionary
+    """
+    indices_to_remove = [i for i, dt in enumerate(tradebook['datetime']) if dt.startswith(date_to_remove)]
+    for key in tradebook:
+        tradebook[key] = [tradebook[key][i] for i in range(len(tradebook[key])) if i not in indices_to_remove]
+    return tradebook

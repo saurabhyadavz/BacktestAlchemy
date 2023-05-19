@@ -242,3 +242,18 @@ class DataProducer:
         else:
             print(f"Error fetching data: {response['message']}")
             return pd.DataFrame()
+
+
+class CandleData:
+    def __init__(self, candle_series, symbol=None, atm_from=None):
+        self.date = candle_series['date']
+        self.open = candle_series['open'] if symbol is None else candle_series[f'{symbol}_open']
+        self.high = candle_series['high'] if symbol is None else candle_series[f'{symbol}_high']
+        self.low = candle_series['low'] if symbol is None else candle_series[f'{symbol}_low']
+        self.close = candle_series['close'] if symbol is None else candle_series[f'{symbol}_close']
+        self.volume = candle_series['volume'] if symbol is None else candle_series[f'{symbol}_volume']
+        self.ohlc4 = (self.open + self.high + self.low + self.close) / 4
+        self.hlc3 = (self.high + self.low + self.close) / 3
+        self.hl2 = (self.high + self.low) / 2
+        self.time = self.date.time()
+        self.atm = int(round(candle_series["close"], -2)) if atm_from is None else int(round(candle_series[atm_from], -2))
